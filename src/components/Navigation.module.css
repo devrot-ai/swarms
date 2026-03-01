@@ -1,0 +1,168 @@
+.nav {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 24px 48px;
+    z-index: var(--z-nav);
+    mix-blend-mode: difference;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--font-heading);
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+}
+
+.logoIcon {
+    font-size: 1.4rem;
+    color: var(--accent-cyan);
+}
+
+.logoText {
+    position: relative;
+}
+
+.menuBtn {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    z-index: calc(var(--z-menu) + 2);
+}
+
+.menuLine {
+    display: block;
+    width: 28px;
+    height: 1.5px;
+    background: var(--text-primary);
+    transition: all 0.4s var(--ease-out-expo);
+    transform-origin: center;
+}
+
+.menuBtnActive .menuLine:first-child {
+    transform: translateY(3.75px) rotate(45deg);
+}
+
+.menuBtnActive .menuLine:last-child {
+    transform: translateY(-3.75px) rotate(-45deg);
+}
+
+/* Overlay */
+.overlay {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-menu);
+    background: rgba(10, 10, 15, 0.97);
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.6s var(--ease-out-expo), visibility 0.6s;
+}
+
+.overlayOpen {
+    opacity: 1;
+    visibility: visible;
+}
+
+.overlayContent {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 60px;
+}
+
+.overlayLinks {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.overlayLink {
+    display: flex;
+    align-items: baseline;
+    gap: 20px;
+    font-family: var(--font-heading);
+    font-size: clamp(2.5rem, 6vw, 5rem);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+    opacity: 0;
+    transform: translateY(40px);
+    transition: opacity 0.5s var(--ease-out-expo), transform 0.5s var(--ease-out-expo), color 0.3s;
+}
+
+.overlayOpen .overlayLink {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.overlayLink:hover {
+    color: var(--accent-cyan);
+}
+
+.linkIndex {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    font-weight: 400;
+    letter-spacing: 0.05em;
+}
+
+.linkLabel {
+    position: relative;
+}
+
+.linkLabel::after {
+    content: '';
+    position: absolute;
+    bottom: -4px;
+    left: 0;
+    width: 0;
+    height: 2px;
+    background: var(--accent-cyan);
+    transition: width 0.4s var(--ease-out-expo);
+}
+
+.overlayLink:hover .linkLabel::after {
+    width: 100%;
+}
+
+.overlayFooter {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.overlaySocials {
+    display: flex;
+    gap: 24px;
+}
+
+.overlaySocials a {
+    transition: color 0.3s;
+}
+
+.overlaySocials a:hover {
+    color: var(--accent-cyan);
+}
+
+@media (max-width: 768px) {
+    .nav {
+        padding: 16px 24px;
+    }
+}
