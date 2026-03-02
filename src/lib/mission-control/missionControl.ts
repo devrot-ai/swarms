@@ -16,9 +16,10 @@ import { missionEventBus } from "@/lib/mission-control/eventBus";
 import { validateAndEncryptKey } from "@/lib/mission-control/security";
 import crypto from "node:crypto";
 
-const DEFAULT_SAFE_MODEL = {
-  provider: "openai",
-  model: "gpt-5.3-codex-safe",
+// Default safe model now points to a local Ollama model for open‑source usage.
+const DEFAULT_SAFE_MODEL: ModelConfig = {
+  provider: "ollama",
+  model: "llama3",
 };
 
 const DESTRUCTIVE_ACTIONS = new Set([
@@ -211,25 +212,33 @@ export function startMissionSession(input: StartSessionRequest): StartSessionRes
   let activeModel: ModelConfig = { ...DEFAULT_SAFE_MODEL };
 
   if (input.userModelOverride) {
-    const secured = validateAndEncryptKey(
-      input.userModelOverride.apiKey,
-      input.userModelOverride.provider,
-    );
+    if (input.userModelOverride.apiKey) {
+      const secured = validateAndEncryptKey(
+        input.userModelOverride.apiKey,
+        input.userModelOverride.provider,
+      );
 
-    appendAudit(sessionId, "dept_sec_01", "byok.validated_and_encrypted", {
-      provider: input.userModelOverride.provider,
-      model: input.userModelOverride.model,
-      keyRef: secured.keyRef,
-      fingerprint: secured.fingerprint,
-      encryptedStored: Boolean(secured.encryptedKey),
-    });
+      appendAudit(sessionId, "dept_sec_01", "byok.validated_and_encrypted", {
+        provider: input.userModelOverride.provider,
+        model: input.userModelOverride.model,
+        keyRef: secured.keyRef,
+        fingerprint: secured.fingerprint,
+        encryptedStored: Boolean(secured.encryptedKey),
+      });
 
-    activeModel = {
-      provider: input.userModelOverride.provider,
-      model: input.userModelOverride.model,
-      keyRef: secured.keyRef,
-      fingerprint: secured.fingerprint,
-    };
+      activeModel = {
+        provider: input.userModelOverride.provider,
+        model: input.userModelOverride.model,
+        keyRef: secured.keyRef,
+        fingerprint: secured.fingerprint,
+      };
+    } else {
+      // Ollama or keyless provider
+      activeModel = {
+        provider: input.userModelOverride.provider,
+        model: input.userModelOverride.model,
+      };
+    }
   }
 
   const session: MissionSession = {

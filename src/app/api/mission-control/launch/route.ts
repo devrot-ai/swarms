@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { startMissionSession } from "@/lib/mission-control/missionControl";
 import { buildCeoPlan } from "@/lib/mission-control/ceoAgent";
 import { buildCooTasks } from "@/lib/mission-control/cooAgent";
+import { agentChat, isOllamaReachable } from "@/lib/mission-control/llm";
 import { missionEventBus } from "@/lib/mission-control/eventBus";
 import { missionStore } from "@/lib/mission-control/stores";
 import { userKeyStore } from "@/lib/mission-control/userKeyStore";
@@ -11,7 +12,7 @@ import { MissionEvent } from "@/lib/mission-control/types";
 interface LaunchInput {
   uid: string;
   template?: "CEO" | "Marketing" | "Engineering" | "Design" | "Quick Task";
-  modelMode: "default" | "apikey";
+  modelMode: "default" | "apikey" | "ollama";
 }
 
 function nowIso() {
@@ -88,6 +89,7 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+    // Ollama does not require a stored API key.
 
     const brief = body.template
       ? templateBrief(body.template)
@@ -134,43 +136,85 @@ export async function POST(req: NextRequest) {
 
     emitTrace(
       missionSession.sessionId,
-      "dept_pm_01",
-      "THOUGHT",
-      "trace.started — mission orchestration initialized",
-      0.91,
+      "system",
+      "STATUS",
+      "Mission workspace created — starting AI agent pipeline…",
+      0.95,
       "RUNNING",
-      { trace: "trace.started", agent_id: "dept_pm_01", short_text: "Mission initialized" },
+      { trace: "trace.started" },
     );
 
-    emitTrace(
-      missionSession.sessionId,
-      "dept_pm_01",
-      "THOUGHT",
-      "trace.step — CEO produced mission objectives, KPIs and token budget",
-      0.9,
-      "RUNNING",
-      { trace: "trace.step", step_no: 1, reasoning: "Plan synthesis", evidence: "Company memory + risk policy" },
-    );
+    /* ------------------------------------------------------------------ */
+    /* Kick off real LLM agent work in the background (non-blocking).     */
+    /* Results stream into the workspace via SSE/event bus.               */
+    /* ------------------------------------------------------------------ */
+    const sid = missionSession.sessionId;
+    const ollamaUp = await isOllamaReachable();
 
-    emitTrace(
-      missionSession.sessionId,
-      "dept_runtime_01",
-      "ACTION",
-      "trace.action — COO created ordered tasks and assigned workers",
-      0.89,
-      "RUNNING",
-      { trace: "trace.action", tool_calls: ["task_queue.emit"], sandbox_result: `${coo.tasks.length} tasks` },
-    );
+    if (ollamaUp) {
+      // Fire-and-forget: run agent pipeline asynchronously
+      (async () => {
+        try {
+          emitTrace(sid, "system", "STATUS", "Ollama connected — agents are thinking…", 0.95, "RUNNING", {});
 
-    emitTrace(
-      missionSession.sessionId,
-      "dept_data_01",
-      "ARTIFACT",
-      "trace.finish — artifact produced for mission plan",
-      0.94,
-      "COMPLETED",
-      { trace: "trace.finish", artifact_id: "mission_plan", confidence: 0.94 },
-    );
+          // CEO agent analyses the mission
+          const ceoResponse = await agentChat(
+            "ceo_agent",
+            `You are launching a new mission workspace.\n\nMission brief: "${brief}"\n\n` +
+            `Think through this step by step and provide:\n` +
+            `1. **Mission Objective** — What exactly we're building/doing\n` +
+            `2. **Departments to Activate** — Which teams and why each is needed\n` +
+            `3. **KPIs** — Specific, measurable success criteria\n` +
+            `4. **Priority Assignments** — P0/P1/P2 with reasoning\n` +
+            `5. **Risk Assessment** — Potential issues and mitigations\n\n` +
+            `Be specific and detailed. Show your reasoning.`,
+            `Project: ${ceo.mission}`,
+          );
+          emitTrace(sid, "ceo_agent", "THOUGHT", ceoResponse.content, 0.92, "RUNNING", { model: ceoResponse.model, tokens: ceoResponse.tokensUsed });
+
+          // COO breaks it into tasks
+          const cooResponse = await agentChat(
+            "coo_agent",
+            `The CEO created this plan:\n${ceoResponse.content}\n\n` +
+            `Break this into specific, concrete tasks. For EACH task:\n` +
+            `- **Task title** — descriptive name\n` +
+            `- **What to do** — detailed steps, not just a title\n` +
+            `- **Assigned to** — which agent/department handles it\n` +
+            `- **Priority** — P0/P1/P2\n` +
+            `- **Estimated time** — realistic estimate\n\n` +
+            `Do NOT use [PENDING] placeholders. Describe actual work.`,
+            `Mission: ${ceo.mission}`,
+          );
+          emitTrace(sid, "coo_agent", "ACTION", cooResponse.content, 0.90, "RUNNING", { model: cooResponse.model, tokens: cooResponse.tokensUsed });
+
+          // Worker agent starts first task
+          const workerResponse = await agentChat(
+            "worker_agent",
+            `The COO assigned these tasks:\n${cooResponse.content}\n\n` +
+            `Pick the highest-priority task and START WORKING on it immediately.\n\n` +
+            `If code is required, write the ACTUAL CODE in markdown code blocks.\n` +
+            `If it's a planning/analysis task, produce the actual deliverable.\n\n` +
+            `Show:\n` +
+            `1. Which task you're working on\n` +
+            `2. Your approach\n` +
+            `3. The actual output (code, document, analysis, etc.)\n` +
+            `4. Status and any blockers`,
+            `Mission: ${ceo.mission}`,
+          );
+          emitTrace(sid, "worker_agent", "ACTION", workerResponse.content, 0.88, "RUNNING", { model: workerResponse.model, tokens: workerResponse.tokensUsed });
+
+          emitTrace(sid, "system", "STATUS", "Initial agent pipeline complete. Use the chat to give further instructions.", 0.95, "COMPLETED", {});
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "Unknown agent error";
+          emitTrace(sid, "system", "STATUS", `Agent pipeline error: ${msg}`, 0.5, "BLOCKED", { error: msg });
+        }
+      })();
+    } else {
+      emitTrace(sid, "system", "STATUS",
+        "⚠ Ollama is not running. Start it with `ollama serve` and pull a model (`ollama pull llama3`). Chat will return an error until Ollama is available.",
+        0.5, "BLOCKED", {},
+      );
+    }
 
     return NextResponse.json(
       {

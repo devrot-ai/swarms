@@ -102,13 +102,16 @@ export interface ApprovalRecord {
 }
 
 export interface UserModelOverrideInput {
-  provider: "openai" | "anthropic" | "google" | "other";
+  /** Supported providers include OpenAI, Anthropic, Google, Ollama, and custom */
+  provider: "openai" | "anthropic" | "google" | "ollama" | "other";
   model: string;
-  apiKey: string;
+  /** API key is optional for Ollama (local) */
+  apiKey?: string;
 }
 
 export interface ModelConfig {
-  provider: string;
+  /** Provider identifier */
+  provider: "openai" | "anthropic" | "google" | "ollama" | "other";
   model: string;
   keyRef?: string;
   fingerprint?: string;

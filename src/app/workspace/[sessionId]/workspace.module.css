@@ -33,8 +33,23 @@
   border-radius: 6px;
 }
 
-.connBadge {
+.modelSelect {
   margin-left: auto;
+  font-size: 0.78rem;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+  cursor: pointer;
+  outline: none;
+}
+
+.modelSelect:focus {
+  border-color: var(--accent-cyan, #0ff);
+}
+
+.connBadge {
   font-size: 0.72rem;
   color: var(--accent-cyan, #0ff);
 }
@@ -178,7 +193,95 @@
 .chatText {
   font-size: 0.85rem;
   line-height: 1.5;
+}
+
+.chatTextContent {
+  font-size: 0.85rem;
+  line-height: 1.6;
   white-space: pre-wrap;
+  display: block;
+}
+
+/* ---- Code blocks inside chat messages ---- */
+.codeBlock {
+  margin: 8px 0;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.codeLang {
+  font-size: 0.68rem;
+  padding: 4px 12px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.codeContent {
+  padding: 12px;
+  margin: 0;
+  font-family: var(--font-mono, 'Consolas', 'Monaco', monospace);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  overflow-x: auto;
+  color: #e0e0e0;
+  white-space: pre;
+}
+
+.codeContent code {
+  font-family: inherit;
+}
+
+/* ---- Progress indicator (agent thinking) ---- */
+.progressMsg {
+  border: 1px solid rgba(0, 255, 255, 0.2) !important;
+  background: rgba(0, 255, 255, 0.05) !important;
+}
+
+.progressIndicator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.progressDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent-cyan, #0ff);
+  animation: progressPulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes progressPulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+.progressInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.progressInfo strong {
+  font-size: 0.8rem;
+  color: var(--accent-cyan, #0ff);
+}
+
+.progressInfo span {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.progressInfo small {
+  font-size: 0.68rem;
+  color: var(--text-muted);
 }
 
 /* typing indicator */

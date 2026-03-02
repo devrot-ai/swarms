@@ -28,6 +28,9 @@ function keyLooksValid(apiKey: string, provider: string) {
       return /^sk-ant-[A-Za-z0-9_-]+$/.test(apiKey);
     case "google":
       return /^[A-Za-z0-9_-]{20,}$/.test(apiKey);
+    case "ollama":
+      // Ollama runs locally and does not require an API key; accept empty string.
+      return true;
     default:
       return true;
   }

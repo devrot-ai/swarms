@@ -44,7 +44,26 @@ export default function WorkspacePage() {
       if (prev.some((e) => e.eventId === incoming.eventId)) return prev;
       return [...prev, incoming];
     });
+    // Also add a human-readable line to the timeline
+    setTimeline((prev) => {
+      const label = incoming.agentId.replace(/_/g, " ");
+      const time = incoming.timestampUtc.slice(11, 19);
+      const line = `${time} • ${label}: ${incoming.message.slice(0, 100)}${incoming.message.length > 100 ? "…" : ""}`;
+      return [...prev, line].slice(-30);
+    });
   }, []);
+
+  /* ---- Model selector state ---- */
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
+
+  /* ---- Progress tracking state ---- */
+  const [currentProgress, setCurrentProgress] = useState<{
+    agent: string;
+    label: string;
+    step: number;
+    totalSteps: number;
+  } | null>(null);
 
   /* ---- Chat state ---- */
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -56,14 +75,27 @@ export default function WorkspacePage() {
   /* auto-scroll chat */
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages]);
+  }, [chatMessages, currentProgress]);
 
   /* auto-focus input */
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
-  /* ---- Send message to agents ---- */
+  /* ---- Fetch available Ollama models on mount ---- */
+  useEffect(() => {
+    fetch("/api/mission-control/health")
+      .then((r) => r.json())
+      .then((data) => {
+        const models: string[] = data?.ollama?.availableModels ?? [];
+        setAvailableModels(models);
+        const current: string = data?.ollama?.selectedModel ?? "";
+        setSelectedModel(models.includes(current) ? current : models[0] ?? "");
+      })
+      .catch(() => {/* health endpoint unreachable */});
+  }, []);
+
+  /* ---- Send message to agents (streaming) ---- */
   const sendMessage = useCallback(async () => {
     const text = chatInput.trim();
     if (!text || sending || !sessionId) return;
@@ -77,27 +109,16 @@ export default function WorkspacePage() {
     setChatMessages((prev) => [...prev, userMsg]);
     setChatInput("");
     setSending(true);
+    setCurrentProgress(null);
 
     try {
       const resp = await fetch("/api/mission-control/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, message: text }),
+        body: JSON.stringify({ sessionId, message: text, model: selectedModel || undefined }),
       });
 
-      if (resp.ok) {
-        const data = await resp.json();
-        const agentMsgs: ChatMessage[] = (
-          data.responses as { agent: string; message: string; timestamp: string }[]
-        ).map((r, i) => ({
-          id: `msg_${Date.now()}_${i}`,
-          role: "agent" as const,
-          agent: r.agent,
-          text: r.message,
-          timestamp: r.timestamp,
-        }));
-        setChatMessages((prev) => [...prev, ...agentMsgs]);
-      } else {
+      if (!resp.ok) {
         const err = await resp.json().catch(() => ({ error: "Unknown error" }));
         setChatMessages((prev) => [
           ...prev,
@@ -109,6 +130,77 @@ export default function WorkspacePage() {
             timestamp: new Date().toISOString(),
           },
         ]);
+        return;
+      }
+
+      /* Read streamed SSE events from the response */
+      const reader = resp.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const chunks = buffer.split("\n\n");
+        buffer = chunks.pop()!;
+
+        for (const chunk of chunks) {
+          const line = chunk.trim();
+          if (!line.startsWith("data: ")) continue;
+
+          try {
+            const data = JSON.parse(line.slice(6)) as {
+              type: string;
+              agent?: string;
+              label?: string;
+              step?: number;
+              totalSteps?: number;
+              message?: string;
+              timestamp?: string;
+              error?: string;
+              model?: string;
+              tokensUsed?: number;
+            };
+
+            if (data.type === "progress") {
+              setCurrentProgress({
+                agent: data.agent ?? "agent",
+                label: data.label ?? "Thinking…",
+                step: data.step ?? 1,
+                totalSteps: data.totalSteps ?? 1,
+              });
+            } else if (data.type === "response") {
+              setCurrentProgress(null);
+              setChatMessages((prev) => [
+                ...prev,
+                {
+                  id: `msg_${Date.now()}_${data.step}`,
+                  role: "agent" as const,
+                  agent: data.agent,
+                  text: data.message ?? "",
+                  timestamp: data.timestamp ?? new Date().toISOString(),
+                },
+              ]);
+            } else if (data.type === "error") {
+              setCurrentProgress(null);
+              setChatMessages((prev) => [
+                ...prev,
+                {
+                  id: `msg_err_${Date.now()}`,
+                  role: "agent",
+                  agent: "system",
+                  text: `Error: ${data.error ?? "Agent pipeline failed."}`,
+                  timestamp: new Date().toISOString(),
+                },
+              ]);
+            }
+            // "done" type — pipeline complete, nothing to render
+          } catch {
+            // skip malformed events
+          }
+        }
       }
     } catch {
       setChatMessages((prev) => [
@@ -123,9 +215,10 @@ export default function WorkspacePage() {
       ]);
     } finally {
       setSending(false);
+      setCurrentProgress(null);
       inputRef.current?.focus();
     }
-  }, [chatInput, sending, sessionId]);
+  }, [chatInput, sending, sessionId, selectedModel]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -236,6 +329,8 @@ export default function WorkspacePage() {
   }, [sessionId]);
 
   const thoughtEvents = useMemo(() => events, [events]);
+  /* Filter events to only show agent thoughts in the timeline sidebar, not chat center */
+  void thoughtEvents; // events used via timeline (addEvent populates both)
 
   /* ---- Helper: pretty agent name ---- */
   function agentLabel(agent?: string) {
@@ -245,11 +340,67 @@ export default function WorkspacePage() {
       .replace(/\b\w/g, (c) => c.toUpperCase());
   }
 
+  /* ---- Render message content with code blocks ---- */
+  function renderMessageContent(text: string) {
+    const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g;
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        const before = text.slice(lastIndex, match.index);
+        if (before.trim()) {
+          parts.push(
+            <span key={`t-${lastIndex}`} className={styles.chatTextContent}>
+              {before}
+            </span>,
+          );
+        }
+      }
+      const lang = match[1];
+      const code = match[2];
+      parts.push(
+        <div key={`c-${match.index}`} className={styles.codeBlock}>
+          {lang && <div className={styles.codeLang}>{lang}</div>}
+          <pre className={styles.codeContent}>
+            <code>{code}</code>
+          </pre>
+        </div>,
+      );
+      lastIndex = match.index + match[0].length;
+    }
+
+    if (lastIndex < text.length) {
+      const remaining = text.slice(lastIndex);
+      if (remaining.trim()) {
+        parts.push(
+          <span key={`t-${lastIndex}`} className={styles.chatTextContent}>
+            {remaining}
+          </span>,
+        );
+      }
+    }
+
+    return parts.length > 0 ? parts : <span className={styles.chatTextContent}>{text}</span>;
+  }
+
   return (
     <main className={styles.page}>
       <header className={styles.header}>
         <h2>Workspace Session</h2>
         <span className={styles.sessionId}>{sessionId}</span>
+        {availableModels.length > 0 && (
+          <select
+            className={styles.modelSelect}
+            value={selectedModel}
+            onChange={(e) => setSelectedModel(e.target.value)}
+          >
+            {availableModels.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        )}
         <small className={styles.connBadge}>{connectionLabel}</small>
       </header>
 
@@ -273,7 +424,7 @@ export default function WorkspacePage() {
           {/* Messages area */}
           <div className={styles.chatScroll}>
             {/* Welcome prompt when empty */}
-            {chatMessages.length === 0 && thoughtEvents.length === 0 && (
+            {chatMessages.length === 0 && (
               <div className={styles.welcome}>
                 <h4>What would you like the swarm to do?</h4>
                 <p>Type a command below — plan a strategy, research a topic, assign tasks, or ask for a status update.</p>
@@ -299,34 +450,6 @@ export default function WorkspacePage() {
               </div>
             )}
 
-            {/* Live thinking events */}
-            {thoughtEvents.map((event, idx) => {
-              const bubbleClass =
-                event.type === "ACTION" || event.type === "APPROVAL_REQUIRED"
-                  ? styles.actionBubble
-                  : event.type === "ARTIFACT"
-                    ? styles.artifactBubble
-                    : styles.planBubble;
-
-              return (
-                <div key={`${event.eventId}-${idx}`} className={`${styles.bubble} ${bubbleClass}`}>
-                  <div className={styles.bubbleMeta}>
-                    <strong>{event.agentId.replace(/_/g, " ")}</strong>
-                    <span>{event.type.toLowerCase()}</span>
-                    <span>{event.timestampUtc.slice(11, 19)}</span>
-                    <span className={styles.badge}>{Math.round(event.confidence * 100)}%</span>
-                  </div>
-                  <p>{event.message}</p>
-                  {event.artifactId ? (
-                    <small>
-                      artifact produced •{" "}
-                      <a href={`/api/mission-control/artifacts/${sessionId}`}>view</a>
-                    </small>
-                  ) : null}
-                </div>
-              );
-            })}
-
             {/* Chat messages */}
             {chatMessages.map((msg) => (
               <div
@@ -337,11 +460,26 @@ export default function WorkspacePage() {
                   <strong>{msg.role === "user" ? "You" : agentLabel(msg.agent)}</strong>
                   <span>{msg.timestamp.slice(11, 19)}</span>
                 </div>
-                <p className={styles.chatText}>{msg.text}</p>
+                <div className={styles.chatText}>{renderMessageContent(msg.text)}</div>
               </div>
             ))}
 
-            {sending && (
+            {currentProgress && (
+              <div className={`${styles.chatMsg} ${styles.chatAgent} ${styles.progressMsg}`}>
+                <div className={styles.progressIndicator}>
+                  <div className={styles.progressDot} />
+                  <div className={styles.progressInfo}>
+                    <strong>{agentLabel(currentProgress.agent)}</strong>
+                    <span>{currentProgress.label}</span>
+                    <small>
+                      Step {currentProgress.step} of {currentProgress.totalSteps}
+                    </small>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {sending && !currentProgress && (
               <div className={`${styles.chatMsg} ${styles.chatAgent}`}>
                 <div className={styles.typing}>
                   <span />

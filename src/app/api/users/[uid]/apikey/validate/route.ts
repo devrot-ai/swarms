@@ -3,15 +3,17 @@ import { validateAndEncryptKey } from "@/lib/mission-control/security";
 import { userKeyStore } from "@/lib/mission-control/userKeyStore";
 
 interface ValidateApiKeyInput {
-  provider: "google" | "openai" | "anthropic" | "custom";
-  apiKey: string;
+  provider: "google" | "openai" | "anthropic" | "ollama" | "custom";
+  /** API key is optional for Ollama (local model) */
+  apiKey?: string;
   model?: string;
 }
 
-const providerMap: Record<ValidateApiKeyInput["provider"], "google" | "openai" | "anthropic" | "other"> = {
+const providerMap: Record<ValidateApiKeyInput["provider"], "google" | "openai" | "anthropic" | "ollama" | "other"> = {
   google: "google",
   openai: "openai",
   anthropic: "anthropic",
+  ollama: "ollama",
   custom: "other",
 };
 
@@ -23,9 +25,33 @@ export async function POST(
     const { uid } = await params;
     const body = (await req.json()) as ValidateApiKeyInput;
 
-    if (!uid || !body?.provider || !body?.apiKey) {
+    if (!uid || !body?.provider) {
       return NextResponse.json(
-        { valid: false, error: "uid, provider and apiKey are required." },
+        { valid: false, error: "uid and provider are required." },
+        { status: 400 },
+      );
+    }
+
+    // For Ollama, no API key is needed; skip validation.
+    if (body.provider === "ollama") {
+      // Store a placeholder indicating local model usage.
+      userKeyStore.save(uid, {
+        provider: body.provider,
+        model: body.model ?? "ollama",
+        keyRef: "local",
+        fingerprint: "local",
+        encryptedKey: "",
+        createdAtUtc: new Date().toISOString(),
+      });
+      return NextResponse.json(
+        { valid: true, message: "Ollama selected – no API key required." },
+        { status: 200 },
+      );
+    }
+
+    if (!body.apiKey) {
+      return NextResponse.json(
+        { valid: false, error: "apiKey is required for this provider." },
         { status: 400 },
       );
     }

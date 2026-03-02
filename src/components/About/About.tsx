@@ -54,7 +54,7 @@ export default function About() {
                             A fully autonomous closed-loop system where AI agents propose ideas,
                             auto-approve and create missions, execute steps via workers,
                             emit events, and trigger new reactions — running continuously
-                            without human intervention. Built on OpenClaw (VPS), Vercel
+                            without human intervention. Built on Ollama (local AI models), Vercel
                             (control plane), and Supabase (shared state).
                         </p>
                     </div>
@@ -63,8 +63,8 @@ export default function About() {
                         {[
                             {
                                 icon: "🧠",
-                                title: "OpenClaw — Think & Execute",
-                                desc: "The brain and hands. Runs roundtable discussions, executes all mission steps, and performs deep research on a VPS.",
+                                title: "Ollama — Think & Execute",
+                                desc: "The brain and hands. Runs roundtable discussions, executes all mission steps, and performs deep research using local AI models.",
                             },
                             {
                                 icon: "⚡",

@@ -41,6 +41,13 @@ export default function Hero() {
                 setError(data.error ?? "Launch failed");
                 return;
             }
+            // Notify other components (e.g., AgentGraph) that the swarm has been activated
+            try {
+                window.dispatchEvent(new Event('swarm-activate'));
+            } catch (e) {
+                // In case window is undefined (unlikely in client), ignore
+                console.error('Failed to dispatch swarm-activate event', e);
+            }
             router.push(`/workspace/${data.sessionId}`);
         } catch {
             setError("Could not reach the server. Try again.");
@@ -93,7 +100,7 @@ export default function Hero() {
                 <p className={styles.subtitle}>
                     Six AI agents — Minion, Sage, Scout, Quill, Xalt &amp; Observer —
                     propose, execute, and self-heal in a fully closed loop.
-                    Powered by OpenClaw, Vercel &amp; Supabase.
+                    Powered by Ollama, Vercel &amp; Supabase.
                 </p>
 
                 {error && <p className={styles.errorBanner}>{error}</p>}

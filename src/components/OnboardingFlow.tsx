@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 import styles from "./OnboardingFlow.module.css";
 
-type Provider = "google" | "openai" | "anthropic" | "custom";
+type Provider = "google" | "openai" | "anthropic" | "ollama" | "custom";
 type Template = "CEO" | "Marketing" | "Engineering" | "Design" | "Quick Task";
 
 const templates: Array<{
@@ -31,6 +31,9 @@ function isValidByProvider(provider: Provider, apiKey: string) {
       return /^sk-ant-[A-Za-z0-9_-]+$/.test(key);
     case "google":
       return /^[A-Za-z0-9_-]{20,}$/.test(key);
+    case "ollama":
+      // Ollama runs locally and does not require an API key.
+      return true;
     default:
       return key.length >= 20;
   }
@@ -167,7 +170,7 @@ export default function OnboardingFlow() {
             <h3 className={styles.title}>Use my API key</h3>
             <p className={styles.body}>
               Enter API key (will be encrypted). Select provider: Google Antigravity (Gemini),
-              OpenAI, Anthropic, or Custom.
+              OpenAI, Anthropic, Ollama (local) or Custom.
             </p>
 
             <label className={styles.label}>Provider</label>
@@ -179,6 +182,7 @@ export default function OnboardingFlow() {
               <option value="google">Google Antigravity (Gemini)</option>
               <option value="openai">OpenAI</option>
               <option value="anthropic">Anthropic</option>
+              <option value="ollama">Ollama (local)</option>
               <option value="custom">Custom</option>
             </select>
 

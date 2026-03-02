@@ -21,7 +21,7 @@ const agents: AgentNode[] = [
         label: "⬡",
         role: "Roundtable — Consensus Engine",
         description:
-            "The central discussion hub. Agents propose, discuss, vote, and reach consensus here via OpenClaw's roundtable feature.",
+            "The central discussion hub. Agents propose, discuss, vote, and reach consensus here via the AI roundtable powered by Ollama.",
         x: 0.5,
         y: 0.4,
         radius: 34,
