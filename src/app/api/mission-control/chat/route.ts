@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
-import { agentChat, isOllamaReachable } from "@/lib/mission-control/llm";
+import { agentChatStream, isAnyProviderAvailable } from "@/lib/mission-control/llm";
 import { missionEventBus } from "@/lib/mission-control/eventBus";
 import { missionStore } from "@/lib/mission-control/stores";
 import { MissionEvent } from "@/lib/mission-control/types";
@@ -249,13 +249,13 @@ export async function POST(req: NextRequest) {
     /* -- Emit user message into the event stream -- */
     emit(sessionId, "user", "THOUGHT", `User: ${message}`, 1.0, "RUNNING");
 
-    /* -- Check Ollama connectivity -- */
-    const ollamaUp = await isOllamaReachable();
-    if (!ollamaUp) {
+    /* -- Check that at least one LLM provider is available -- */
+    const anyUp = await isAnyProviderAvailable();
+    if (!anyUp) {
       return NextResponse.json(
         {
           error:
-            "Ollama is not running. Start it with `ollama serve` and make sure a model is pulled.",
+            "No LLM provider available. Set OPENAI_API_KEY or GEMINI_API_KEY in your environment, or start Ollama locally.",
         },
         { status: 503 },
       );
@@ -290,7 +290,22 @@ export async function POST(req: NextRequest) {
             });
 
             const prompt = step.buildPrompt(message, context, prevResults);
-            const result = await agentChat(step.agentId, prompt, context, model);
+
+            // Stream tokens so the user sees the agent thinking in real time
+            const result = await agentChatStream(
+              step.agentId,
+              prompt,
+              (token) => {
+                send({
+                  type: "token",
+                  agent: step.agentId,
+                  token,
+                  step: i + 1,
+                });
+              },
+              context,
+              model,
+            );
             prevResults.push(result.content);
 
             // Emit to SSE event bus for timeline/audit panels
@@ -303,7 +318,7 @@ export async function POST(req: NextRequest) {
               "RUNNING",
             );
 
-            // Send the agent response to the frontend stream
+            // Send the complete agent response to the frontend stream
             send({
               type: "response",
               agent: step.agentId,
@@ -313,6 +328,7 @@ export async function POST(req: NextRequest) {
               totalSteps: pipeline.length,
               tokensUsed: result.tokensUsed,
               model: result.model,
+              provider: result.provider,
             });
           }
 

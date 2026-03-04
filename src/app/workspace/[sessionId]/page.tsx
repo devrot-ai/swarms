@@ -54,7 +54,7 @@ export default function WorkspacePage() {
   }, []);
 
   /* ---- Model selector state ---- */
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [availableModels, setAvailableModels] = useState<{provider: string; model: string; label: string}[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
 
   /* ---- Progress tracking state ---- */
@@ -64,6 +64,9 @@ export default function WorkspacePage() {
     step: number;
     totalSteps: number;
   } | null>(null);
+
+  /* ---- Live streaming text from current agent ---- */
+  const [streamingText, setStreamingText] = useState<string>("");
 
   /* ---- Chat state ---- */
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -75,22 +78,22 @@ export default function WorkspacePage() {
   /* auto-scroll chat */
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages, currentProgress]);
+  }, [chatMessages, currentProgress, streamingText]);
 
   /* auto-focus input */
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
-  /* ---- Fetch available Ollama models on mount ---- */
+  /* ---- Fetch available models from all providers on mount ---- */
   useEffect(() => {
     fetch("/api/mission-control/health")
       .then((r) => r.json())
       .then((data) => {
-        const models: string[] = data?.ollama?.availableModels ?? [];
+        const models: {provider: string; model: string; label: string}[] = data?.models ?? [];
         setAvailableModels(models);
-        const current: string = data?.ollama?.selectedModel ?? "";
-        setSelectedModel(models.includes(current) ? current : models[0] ?? "");
+        const current: string = data?.selectedModel ?? "";
+        setSelectedModel(models.find(m => m.model === current)?.model ?? models[0]?.model ?? "");
       })
       .catch(() => {/* health endpoint unreachable */});
   }, []);
@@ -110,6 +113,7 @@ export default function WorkspacePage() {
     setChatInput("");
     setSending(true);
     setCurrentProgress(null);
+    setStreamingText("");
 
     try {
       const resp = await fetch("/api/mission-control/chat", {
@@ -161,17 +165,26 @@ export default function WorkspacePage() {
               timestamp?: string;
               error?: string;
               model?: string;
+              provider?: string;
               tokensUsed?: number;
+              token?: string;
             };
 
             if (data.type === "progress") {
+              // New agent step starting — reset streaming text
+              setStreamingText("");
               setCurrentProgress({
                 agent: data.agent ?? "agent",
                 label: data.label ?? "Thinking…",
                 step: data.step ?? 1,
                 totalSteps: data.totalSteps ?? 1,
               });
+            } else if (data.type === "token") {
+              // Live token from agent — append to streaming display
+              setStreamingText((prev) => prev + (data.token ?? ""));
             } else if (data.type === "response") {
+              // Agent finished — clear streaming, add final message
+              setStreamingText("");
               setCurrentProgress(null);
               setChatMessages((prev) => [
                 ...prev,
@@ -390,16 +403,18 @@ export default function WorkspacePage() {
       <header className={styles.header}>
         <h2>Workspace Session</h2>
         <span className={styles.sessionId}>{sessionId}</span>
-        {availableModels.length > 0 && (
+        {availableModels.length > 0 ? (
           <select
             className={styles.modelSelect}
             value={selectedModel}
             onChange={(e) => setSelectedModel(e.target.value)}
           >
             {availableModels.map((m) => (
-              <option key={m} value={m}>{m}</option>
+              <option key={m.model} value={m.model}>{m.label}</option>
             ))}
           </select>
+        ) : (
+          <span className={styles.noProvider}>No LLM provider — start Ollama locally or set GEMINI_API_KEY</span>
         )}
         <small className={styles.connBadge}>{connectionLabel}</small>
       </header>
@@ -476,6 +491,12 @@ export default function WorkspacePage() {
                     </small>
                   </div>
                 </div>
+                {streamingText && (
+                  <div className={styles.streamingText}>
+                    {renderMessageContent(streamingText)}
+                    <span className={styles.streamCursor}>|</span>
+                  </div>
+                )}
               </div>
             )}
 

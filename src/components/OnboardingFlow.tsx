@@ -52,7 +52,7 @@ export default function OnboardingFlow() {
   const router = useRouter();
   const [mode, setMode] = useState<"welcome" | "apikey" | "agents">("welcome");
   const [modelMode, setModelMode] = useState<"default" | "apikey">("default");
-  const [provider, setProvider] = useState<Provider>("google");
+  const [provider, setProvider] = useState<Provider>("ollama");
   const [apiKey, setApiKey] = useState("");
   const [message, setMessage] = useState("");
   const [template, setTemplate] = useState<Template>("Quick Task");
@@ -169,8 +169,8 @@ export default function OnboardingFlow() {
           <>
             <h3 className={styles.title}>Use my API key</h3>
             <p className={styles.body}>
-              Enter API key (will be encrypted). Select provider: Google Antigravity (Gemini),
-              OpenAI, Anthropic, Ollama (local) or Custom.
+              Enter API key (will be encrypted). Select provider: Ollama (local),
+              Google Antigravity (Gemini), OpenAI, Anthropic or Custom.
             </p>
 
             <label className={styles.label}>Provider</label>
@@ -179,10 +179,10 @@ export default function OnboardingFlow() {
               value={provider}
               onChange={(event) => setProvider(event.target.value as Provider)}
             >
+              <option value="ollama">Ollama (local)</option>
               <option value="google">Google Antigravity (Gemini)</option>
               <option value="openai">OpenAI</option>
               <option value="anthropic">Anthropic</option>
-              <option value="ollama">Ollama (local)</option>
               <option value="custom">Custom</option>
             </select>
 

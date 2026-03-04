@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { startMissionSession } from "@/lib/mission-control/missionControl";
 import { buildCeoPlan } from "@/lib/mission-control/ceoAgent";
 import { buildCooTasks } from "@/lib/mission-control/cooAgent";
-import { agentChat, isOllamaReachable } from "@/lib/mission-control/llm";
+import { agentChat, isAnyProviderAvailable } from "@/lib/mission-control/llm";
 import { missionEventBus } from "@/lib/mission-control/eventBus";
 import { missionStore } from "@/lib/mission-control/stores";
 import { userKeyStore } from "@/lib/mission-control/userKeyStore";
@@ -149,13 +149,13 @@ export async function POST(req: NextRequest) {
     /* Results stream into the workspace via SSE/event bus.               */
     /* ------------------------------------------------------------------ */
     const sid = missionSession.sessionId;
-    const ollamaUp = await isOllamaReachable();
+    const anyProviderUp = await isAnyProviderAvailable();
 
-    if (ollamaUp) {
+    if (anyProviderUp) {
       // Fire-and-forget: run agent pipeline asynchronously
       (async () => {
         try {
-          emitTrace(sid, "system", "STATUS", "Ollama connected — agents are thinking…", 0.95, "RUNNING", {});
+          emitTrace(sid, "system", "STATUS", "LLM provider connected — agents are thinking…", 0.95, "RUNNING", {});
 
           // CEO agent analyses the mission
           const ceoResponse = await agentChat(
@@ -211,7 +211,7 @@ export async function POST(req: NextRequest) {
       })();
     } else {
       emitTrace(sid, "system", "STATUS",
-        "⚠ Ollama is not running. Start it with `ollama serve` and pull a model (`ollama pull llama3`). Chat will return an error until Ollama is available.",
+        "⚠ No LLM provider available. Start Ollama locally with `ollama serve`, or set GEMINI_API_KEY or OPENAI_API_KEY in your .env.local.",
         0.5, "BLOCKED", {},
       );
     }

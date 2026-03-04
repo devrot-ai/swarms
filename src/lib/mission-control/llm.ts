@@ -1,200 +1,33 @@
-/**
- * LLM client — talks to Ollama (or any OpenAI-compatible endpoint).
- *
- * Ollama exposes an OpenAI-compatible API at:
- *   POST http://localhost:11434/v1/chat/completions
- *
- * Set OLLAMA_BASE_URL in .env.local to override (e.g. a remote server).
- * Set OLLAMA_MODEL to choose which pulled model to use  (default: llama3).
- */
+/* ------------------------------------------------------------------ */
+/*  Multi-provider LLM module                                         */
+/*  Supports: Ollama (local), Google Gemini, OpenAI                   */
+/*  Falls back automatically: Ollama → Gemini → OpenAI                */
+/* ------------------------------------------------------------------ */
 
-export interface ChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
+const OLLAMA_BASE = process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434";
 
-export interface LlmResponse {
+export type LLMProvider = "ollama" | "google" | "openai";
+
+export interface AgentChatResult {
   content: string;
   model: string;
+  provider: LLMProvider;
   tokensUsed: number;
 }
 
-function getBaseUrl(): string {
-  return process.env.OLLAMA_BASE_URL?.replace(/\/+$/, "") || "http://localhost:11434";
+export interface ProviderModel {
+  provider: LLMProvider;
+  model: string;
+  label: string;
 }
 
-function getModel(): string {
-  return process.env.OLLAMA_MODEL || "llama3";
-}
+/* ---------- Provider availability checks ---------- */
 
-/**
- * Send a chat completion request to Ollama's OpenAI-compatible endpoint.
- */
-export async function chatCompletion(
-  messages: ChatMessage[],
-  opts?: { temperature?: number; maxTokens?: number; model?: string },
-): Promise<LlmResponse> {
-  const base = getBaseUrl();
-  const model = opts?.model || getModel();
-  const temperature = opts?.temperature ?? 0.7;
-  const maxTokens = opts?.maxTokens ?? 4096;
-
-  const url = `${base}/v1/chat/completions`;
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature,
-      max_tokens: maxTokens,
-      stream: false,
-    }),
-    signal: AbortSignal.timeout(120_000), // 2 min timeout for slower models
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(
-      `Ollama request failed (${res.status}): ${text || res.statusText}. ` +
-      `Make sure Ollama is running at ${base} and model "${model}" is pulled.`,
-    );
-  }
-
-  const json = await res.json();
-  const choice = json.choices?.[0];
-
-  return {
-    content: choice?.message?.content?.trim() ?? "",
-    model: json.model ?? model,
-    tokensUsed: json.usage?.total_tokens ?? 0,
-  };
-}
-
-/* ---- Convenience: per-agent wrappers ---- */
-
-const AGENT_PROMPTS: Record<string, string> = {
-  ceo_agent: `You are the CEO Agent of an autonomous AI swarm. You make strategic decisions and coordinate the team.
-
-Your responsibilities:
-- Analyze requests and create clear, detailed mission plans
-- Think step-by-step and show your reasoning process
-- Identify which departments/agents to activate and WHY
-- Define measurable KPIs and success criteria
-- Set priorities (P0 = critical, P1 = important, P2 = nice-to-have)
-
-Always show your thought process. Be specific and detailed, not generic. Use markdown formatting with headers, bullet points, and **bold** text for emphasis.`,
-
-  coo_agent: `You are the COO Agent of an autonomous AI swarm. You turn plans into actionable work.
-
-CRITICAL RULES:
-- NEVER use [PENDING] or placeholder text — describe exactly what each task involves
-- NEVER use generic task names — be specific about the technical work required
-- Include file names, technology choices, and implementation details
-- Each task should have enough detail that a developer could start working immediately
-
-For each task provide:
-- **Task title** — specific and descriptive
-- **What to do** — detailed implementation steps (3-5 bullet points minimum)
-- **Technology/tools** — what frameworks, languages, libraries to use
-- **Assigned to** — which agent handles it
-- **Priority** — P0/P1/P2 with justification
-- **Estimated time** — realistic estimate
-
-Produce the task breakdown immediately. Do not describe your process.`,
-
-  research_agent: `You are the Research Agent of an autonomous AI swarm. You investigate topics deeply and produce ACTUAL research findings — not descriptions of what you would research.
-
-CRITICAL RULES:
-- NEVER say "I'll analyze" or "I'll investigate" — just DO IT and show the findings
-- NEVER say "results will stream into your timeline" — present the results RIGHT NOW
-- Produce the actual research output with specific data, facts, and analysis
-- Include real examples, comparisons, and actionable insights
-
-Your output format:
-- Use markdown headers, bullet points, numbered lists, and **bold** for emphasis
-- Include specific facts and data points
-- Show pros/cons for alternatives
-- Give concrete, actionable recommendations
-
-Start producing findings immediately. Do not describe your process.`,
-
-  worker_agent: `You are a Worker Agent in an autonomous AI swarm. You BUILD things and produce real output.
-
-CRITICAL RULES:
-- NEVER say "Workers assigned" or "Executing tasks" — actually DO THE WORK
-- NEVER describe what you would build — BUILD IT and show the code
-- NEVER use placeholder comments like "// add more here" — write complete code
-- Write COMPLETE, WORKING, PRODUCTION-READY code in markdown code blocks
-
-When asked to build something:
-1. Show each file in its own code block with the language tag
-2. Include the filename as the first comment
-3. Write ALL necessary files — HTML, CSS, JS, config, etc.
-4. Make code complete and ready to use
-5. Add brief explanations between code blocks
-
-Example format:
-\`\`\`html
-<!-- index.html -->
-<!DOCTYPE html>
-<html>...</html>
-\`\`\`
-
-\`\`\`css
-/* styles.css */
-body { ... }
-\`\`\`
-
-Start writing code immediately. Do not describe what you plan to do.`,
-
-  pm_agent: `You are the Program Management Agent of an autonomous AI swarm. You track and report progress.
-
-Your responsibilities:
-- Give detailed, honest status reports with specifics
-- Track what's been completed with concrete details
-- Identify blockers, risks, and their mitigation plans
-- Show progress percentages and metrics where possible
-- Lay out clear next steps with owners and timelines
-
-Be specific and data-driven. Don't be vague — reference actual tasks and deliverables. Use markdown formatting.`,
-};
-
-/**
- * Call the LLM as a specific agent with its system prompt.
- */
-export async function agentChat(
-  agentId: string,
-  userMessage: string,
-  context?: string,
-  model?: string,
-): Promise<LlmResponse> {
-  const systemPrompt = AGENT_PROMPTS[agentId] ?? AGENT_PROMPTS.worker_agent;
-
-  const messages: ChatMessage[] = [
-    { role: "system", content: systemPrompt },
-  ];
-
-  if (context) {
-    messages.push({
-      role: "system",
-      content: `Context from the mission so far:\n${context}`,
-    });
-  }
-
-  messages.push({ role: "user", content: userMessage });
-
-  return chatCompletion(messages, model ? { model } : undefined);
-}
-
-/**
- * Quick health check — returns true if Ollama is reachable.
- */
 export async function isOllamaReachable(): Promise<boolean> {
   try {
-    const res = await fetch(`${getBaseUrl()}/api/tags`, {
-      signal: AbortSignal.timeout(5000),
+    const res = await fetch(`${OLLAMA_BASE}/api/tags`, {
+      method: "GET",
+      signal: AbortSignal.timeout(3000),
     });
     return res.ok;
   } catch {
@@ -202,18 +35,384 @@ export async function isOllamaReachable(): Promise<boolean> {
   }
 }
 
-/**
- * List models available in Ollama.
- */
-export async function listModels(): Promise<string[]> {
-  try {
-    const res = await fetch(`${getBaseUrl()}/api/tags`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return [];
-    const json = await res.json();
-    return (json.models ?? []).map((m: { name: string }) => m.name);
-  } catch {
-    return [];
+export function isOpenAIConfigured(): boolean {
+  return !!process.env.OPENAI_API_KEY;
+}
+
+export function isGeminiConfigured(): boolean {
+  return !!process.env.GEMINI_API_KEY;
+}
+
+/* ---------- List available models across providers ---------- */
+
+export async function listAvailableModels(): Promise<ProviderModel[]> {
+  const models: ProviderModel[] = [];
+
+  // Ollama (local) listed first as primary provider
+  if (await isOllamaReachable()) {
+    try {
+      const res = await fetch(`${OLLAMA_BASE}/api/tags`, { signal: AbortSignal.timeout(3000) });
+      if (res.ok) {
+        const data = await res.json();
+        const ollamaModels: { name: string }[] = data?.models ?? [];
+        for (const m of ollamaModels) {
+          models.push({ provider: "ollama", model: m.name, label: `${m.name} (Ollama)` });
+        }
+      }
+    } catch { /* Ollama unavailable */ }
   }
+
+  if (isGeminiConfigured()) {
+    models.push(
+      { provider: "google", model: "gemini-2.0-flash", label: "Gemini 2.0 Flash (Google)" },
+      { provider: "google", model: "gemini-2.5-flash-preview-05-20", label: "Gemini 2.5 Flash (Google)" },
+    );
+  }
+
+  if (isOpenAIConfigured()) {
+    models.push(
+      { provider: "openai", model: "gpt-4o-mini", label: "GPT-4o Mini (OpenAI)" },
+      { provider: "openai", model: "gpt-4o", label: "GPT-4o (OpenAI)" },
+      { provider: "openai", model: "gpt-4.1-nano", label: "GPT-4.1 Nano (OpenAI)" },
+      { provider: "openai", model: "gpt-4.1-mini", label: "GPT-4.1 Mini (OpenAI)" },
+    );
+  }
+
+  return models;
+}
+
+/* ---------- Detect provider from model string ---------- */
+
+function detectProvider(model: string): LLMProvider {
+  if (model.startsWith("gpt-")) return "openai";
+  if (model.startsWith("gemini-")) return "google";
+  return "ollama";
+}
+
+/* ---------- Pick a default model from what's available ---------- */
+
+async function pickDefault(): Promise<{ provider: LLMProvider; model: string }> {
+  if (await isOllamaReachable()) return { provider: "ollama", model: process.env.OLLAMA_MODEL ?? "llama3" };
+  if (isGeminiConfigured()) return { provider: "google", model: "gemini-2.0-flash" };
+  if (isOpenAIConfigured()) return { provider: "openai", model: "gpt-4o-mini" };
+  throw new Error(
+    "No LLM provider available. Start Ollama locally with `ollama serve`, or set GEMINI_API_KEY or OPENAI_API_KEY in your environment.",
+  );
+}
+
+/* ---------- Provider-specific chat calls ---------- */
+
+async function chatOpenAI(
+  messages: { role: string; content: string }[],
+  model: string,
+): Promise<AgentChatResult> {
+  const apiKey = process.env.OPENAI_API_KEY!;
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({ model, messages, temperature: 0.7 }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`OpenAI request failed (${res.status}): ${text}`);
+  }
+
+  const data = await res.json();
+  return {
+    content: data.choices?.[0]?.message?.content ?? "",
+    model,
+    provider: "openai",
+    tokensUsed: (data.usage?.prompt_tokens ?? 0) + (data.usage?.completion_tokens ?? 0),
+  };
+}
+
+async function chatOpenAIStream(
+  messages: { role: string; content: string }[],
+  model: string,
+  onToken: (token: string) => void,
+): Promise<AgentChatResult> {
+  const apiKey = process.env.OPENAI_API_KEY!;
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({ model, messages, temperature: 0.7, stream: true }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`OpenAI stream failed (${res.status}): ${text}`);
+  }
+
+  let content = "";
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop()!;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data: ") || trimmed === "data: [DONE]") continue;
+      try {
+        const json = JSON.parse(trimmed.slice(6));
+        const delta = json.choices?.[0]?.delta?.content;
+        if (delta) { content += delta; onToken(delta); }
+      } catch { /* skip */ }
+    }
+  }
+
+  return { content, model, provider: "openai", tokensUsed: 0 };
+}
+
+async function chatGemini(
+  messages: { role: string; content: string }[],
+  model: string,
+): Promise<AgentChatResult> {
+  const apiKey = process.env.GEMINI_API_KEY!;
+  const systemMsg = messages.find((m) => m.role === "system");
+  const userMsgs = messages.filter((m) => m.role !== "system");
+
+  const contents = userMsgs.map((m) => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{ text: m.content }],
+  }));
+
+  const body: Record<string, unknown> = { contents };
+  if (systemMsg) {
+    body.systemInstruction = { parts: [{ text: systemMsg.content }] };
+  }
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Gemini request failed (${res.status}): ${text}`);
+  }
+
+  const data = await res.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  const usage = data.usageMetadata;
+  return {
+    content: text,
+    model,
+    provider: "google",
+    tokensUsed: (usage?.promptTokenCount ?? 0) + (usage?.candidatesTokenCount ?? 0),
+  };
+}
+
+async function chatGeminiStream(
+  messages: { role: string; content: string }[],
+  model: string,
+  onToken: (token: string) => void,
+): Promise<AgentChatResult> {
+  const apiKey = process.env.GEMINI_API_KEY!;
+  const systemMsg = messages.find((m) => m.role === "system");
+  const userMsgs = messages.filter((m) => m.role !== "system");
+
+  const contents = userMsgs.map((m) => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{ text: m.content }],
+  }));
+
+  const body: Record<string, unknown> = { contents };
+  if (systemMsg) {
+    body.systemInstruction = { parts: [{ text: systemMsg.content }] };
+  }
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Gemini stream failed (${res.status}): ${text}`);
+  }
+
+  let content = "";
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop()!;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data: ")) continue;
+      try {
+        const json = JSON.parse(trimmed.slice(6));
+        const delta = json.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (delta) { content += delta; onToken(delta); }
+      } catch { /* skip */ }
+    }
+  }
+
+  return { content, model, provider: "google", tokensUsed: 0 };
+}
+
+async function chatOllama(
+  messages: { role: string; content: string }[],
+  model: string,
+): Promise<AgentChatResult> {
+  const res = await fetch(`${OLLAMA_BASE}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, messages, stream: false }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Ollama request failed (${res.status}): ${text}`);
+  }
+
+  const data = await res.json();
+  return {
+    content: data.message?.content ?? "",
+    model,
+    provider: "ollama",
+    tokensUsed: (data.prompt_eval_count ?? 0) + (data.eval_count ?? 0),
+  };
+}
+
+async function chatOllamaStream(
+  messages: { role: string; content: string }[],
+  model: string,
+  onToken: (token: string) => void,
+): Promise<AgentChatResult> {
+  const res = await fetch(`${OLLAMA_BASE}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, messages, stream: true }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Ollama stream failed (${res.status}): ${text}`);
+  }
+
+  let content = "";
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop()!;
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const json = JSON.parse(line);
+        const delta = json.message?.content;
+        if (delta) { content += delta; onToken(delta); }
+      } catch { /* skip */ }
+    }
+  }
+
+  return { content, model, provider: "ollama", tokensUsed: 0 };
+}
+
+/* ---------- Build chat messages ---------- */
+
+function buildMessages(agentId: string, prompt: string, context?: string) {
+  const messages: { role: string; content: string }[] = [];
+  if (context) {
+    messages.push({ role: "system", content: `You are ${agentId}.\n\nContext:\n${context}` });
+  } else {
+    messages.push({ role: "system", content: `You are ${agentId}.` });
+  }
+  messages.push({ role: "user", content: prompt });
+  return messages;
+}
+
+/* ---------- Main chat function (non-streaming) ---------- */
+
+export async function agentChat(
+  agentId: string,
+  prompt: string,
+  context?: string,
+  model?: string,
+): Promise<AgentChatResult> {
+  const messages = buildMessages(agentId, prompt, context);
+
+  if (model) {
+    const provider = detectProvider(model);
+    switch (provider) {
+      case "openai": return chatOpenAI(messages, model);
+      case "google": return chatGemini(messages, model);
+      case "ollama": return chatOllama(messages, model);
+    }
+  }
+
+  const defaults = await pickDefault();
+  switch (defaults.provider) {
+    case "openai": return chatOpenAI(messages, defaults.model);
+    case "google": return chatGemini(messages, defaults.model);
+    case "ollama": return chatOllama(messages, defaults.model);
+  }
+}
+
+/* ---------- Streaming chat function ---------- */
+
+export async function agentChatStream(
+  agentId: string,
+  prompt: string,
+  onToken: (token: string) => void,
+  context?: string,
+  model?: string,
+): Promise<AgentChatResult> {
+  const messages = buildMessages(agentId, prompt, context);
+
+  if (model) {
+    const provider = detectProvider(model);
+    switch (provider) {
+      case "openai": return chatOpenAIStream(messages, model, onToken);
+      case "google": return chatGeminiStream(messages, model, onToken);
+      case "ollama": return chatOllamaStream(messages, model, onToken);
+    }
+  }
+
+  const defaults = await pickDefault();
+  switch (defaults.provider) {
+    case "openai": return chatOpenAIStream(messages, defaults.model, onToken);
+    case "google": return chatGeminiStream(messages, defaults.model, onToken);
+    case "ollama": return chatOllamaStream(messages, defaults.model, onToken);
+  }
+}
+
+/* ---------- Check if ANY provider is available ---------- */
+
+export async function isAnyProviderAvailable(): Promise<boolean> {
+  if (await isOllamaReachable()) return true;
+  if (isGeminiConfigured()) return true;
+  if (isOpenAIConfigured()) return true;
+  return false;
 }
