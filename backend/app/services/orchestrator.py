@@ -1,14 +1,26 @@
+"""Orchestrator: thin coordinator that delegates to Planner, Executor, and Critic."""
 import json
 from datetime import datetime, timedelta, timezone
+from typing import Generator
 from sqlalchemy.orm import Session
 from app.models.entities import Proposal, Mission, Step, Event
 from app.schemas.contracts import AgentRunRequest
-from app.services.llm import generate_plan, synthesize_final_answer
+from app.agents.planner import Planner
+from app.agents.executor import Executor
+from app.agents.critic import Critic
+from app.services.llm import synthesize_final_answer
 from app.services.policy import get_policy
-from app.tools.registry import run_tool
+
+planner = Planner()
+executor = Executor()
+critic = Critic()
+
 
 def _uid(prefix: str) -> str:
     return f"{prefix}_{datetime.utcnow().timestamp()}".replace(".", "")
+
+
+# ── Serializers ─────────────────────────────────────────────────────
 
 def proposal_to_dict(p: Proposal | None):
     if not p:
@@ -25,6 +37,7 @@ def proposal_to_dict(p: Proposal | None):
         "updated_at": p.updated_at.isoformat() if p.updated_at else None,
     }
 
+
 def mission_to_dict(m: Mission | None):
     if not m:
         return None
@@ -40,6 +53,7 @@ def mission_to_dict(m: Mission | None):
         "updated_at": m.updated_at.isoformat() if m.updated_at else None,
     }
 
+
 def step_to_dict(s: Step):
     return {
         "id": s.id,
@@ -53,6 +67,7 @@ def step_to_dict(s: Step):
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
     }
 
+
 def event_to_dict(e: Event):
     return {
         "id": e.id,
@@ -62,6 +77,9 @@ def event_to_dict(e: Event):
         "created_at": e.created_at.isoformat() if e.created_at else None,
         "updated_at": e.updated_at.isoformat() if e.updated_at else None,
     }
+
+
+# ── Core operations ────────────────────────────────────────────────
 
 def create_proposal(db: Session, user_id: str | None, prompt: str) -> Proposal:
     proposal = Proposal(
@@ -77,6 +95,7 @@ def create_proposal(db: Session, user_id: str | None, prompt: str) -> Proposal:
     db.refresh(proposal)
     return proposal
 
+
 def maybe_auto_approve(db: Session, proposal: Proposal) -> bool:
     auto_approve = (get_policy(db, "auto_approve") or "false").lower() == "true"
     proposal.approved = auto_approve
@@ -85,8 +104,9 @@ def maybe_auto_approve(db: Session, proposal: Proposal) -> bool:
     db.refresh(proposal)
     return auto_approve
 
+
 def create_mission_from_proposal(db: Session, proposal: Proposal):
-    plan = generate_plan(proposal.prompt)
+    plan = planner.generate_plan(proposal.prompt)
     mission = Mission(
         id=_uid("miss"),
         proposal_id=proposal.id,
@@ -104,78 +124,44 @@ def create_mission_from_proposal(db: Session, proposal: Proposal):
     db.commit()
     return mission, plan
 
+
 def execute_mission(db: Session, mission: Mission, plan: dict) -> dict:
-    mission.status = "running"
-    db.commit()
+    """Execute mission via Executor, then validate via Critic."""
+    result = executor.execute_plan(db, mission, plan)
+    step_outputs = result["step_outputs"]
+    events = result["events"]
 
-    step_outputs = []
-    events = []
-
+    # Critic validation pass
+    verdict = critic.validate_result(mission.goal, step_outputs)
+    events.append({"kind": "critic_verdict", "payload": verdict.to_dict()})
     db.add(Event(
         id=_uid("evt"),
         mission_id=mission.id,
-        kind="mission_started",
-        payload_json=json.dumps({"mission_id": mission.id, "title": mission.title}),
+        kind="critic_verdict",
+        payload_json=json.dumps(verdict.to_dict()),
     ))
     db.commit()
 
-    steps = plan.get("steps", [])
-    for idx, step in enumerate(steps, start=1):
-        tool_name = step.get("tool", "unknown")
-        input_payload = step.get("input", {})
-        step_row = Step(
-            id=_uid("step"),
-            mission_id=mission.id,
-            step_number=idx,
-            tool_name=tool_name,
-            input_json=json.dumps(input_payload),
-            output_json=None,
-            status="running",
-        )
-        db.add(step_row)
-        db.commit()
-        db.refresh(step_row)
-
-        result = run_tool(tool_name, input_payload, db=db, mission_id=mission.id)
-        step_row.output_json = json.dumps(result)
-        step_row.status = "success" if "error" not in result else "failed"
-        db.commit()
-
-        step_outputs.append({
-            "step_number": idx,
-            "tool": tool_name,
-            "input": input_payload,
-            "output": result,
-        })
-
-        kind = "step_completed" if "error" not in result else "step_failed"
-        events.append({"kind": kind, "payload": {"step": idx, "tool": tool_name, "result": result}})
-        db.add(Event(
-            id=_uid("evt"),
-            mission_id=mission.id,
-            kind=kind,
-            payload_json=json.dumps({"step": idx, "tool": tool_name, "result": result}),
-        ))
-        db.commit()
-
-        if "error" in result:
-            mission.status = "needs_attention"
-            mission.last_event = "step_failed"
-            db.commit()
-            break
-
     final_text = synthesize_final_answer(mission.goal, step_outputs)
     mission.result = final_text
-    mission.status = "done" if mission.status != "needs_attention" else "done_with_issues"
+    if verdict.verdict == "escalate":
+        mission.status = "escalated"
+    elif mission.status == "needs_attention":
+        mission.status = "done_with_issues"
+    else:
+        mission.status = "done"
     mission.last_event = "mission_done"
     db.add(Event(
         id=_uid("evt"),
         mission_id=mission.id,
         kind="mission_done",
-        payload_json=json.dumps({"result": final_text}),
+        payload_json=json.dumps({"result": final_text, "critic": verdict.to_dict()}),
     ))
     db.commit()
-    return {"final": final_text, "steps": step_outputs, "events": events}
+    return {"final": final_text, "steps": step_outputs, "events": events, "critic": verdict.to_dict()}
+
+
+# ── Closed-loop runners ────────────────────────────────────────────
 
 def run_closed_loop(db: Session, request: AgentRunRequest) -> dict:
     proposal = create_proposal(db, request.user_id, request.input)
@@ -205,6 +191,82 @@ def run_closed_loop(db: Session, request: AgentRunRequest) -> dict:
         "approved": True,
     }
 
+
+def run_closed_loop_stream(db: Session, request: AgentRunRequest) -> Generator[str, None, None]:
+    """Generator that yields SSE events at each lifecycle stage."""
+
+    def _sse(event_type: str, data: dict) -> str:
+        return f"data: {json.dumps({'type': event_type, 'data': data})}\n\n"
+
+    # 1. Proposal
+    proposal = create_proposal(db, request.user_id, request.input)
+    yield _sse("proposal_created", {"proposal_id": proposal.id, "prompt": proposal.prompt})
+
+    # 2. Auto-approve
+    approved = maybe_auto_approve(db, proposal)
+    yield _sse("approval", {"approved": approved, "status": proposal.status})
+
+    if not approved:
+        yield _sse("done", {"status": "pending_approval", "response": "Waiting for approval."})
+        return
+
+    # 3. Mission creation
+    mission, plan = create_mission_from_proposal(db, proposal)
+    yield _sse("mission_created", {"mission_id": mission.id, "title": mission.title, "plan": plan})
+
+    # 4. Execute steps one by one
+    mission.status = "running"
+    db.commit()
+
+    step_outputs: list[dict] = []
+    steps = plan.get("steps", [])
+    for idx, step_def in enumerate(steps, start=1):
+        tool_name = step_def.get("tool", "unknown")
+        input_payload = step_def.get("input", {})
+
+        yield _sse("step_started", {"step": idx, "tool": tool_name, "input": input_payload})
+
+        from app.tools.registry import run_tool
+        result = run_tool(tool_name, input_payload, db=db, mission_id=mission.id)
+
+        status = "success" if "error" not in result else "failed"
+        step_data = {"step": idx, "tool": tool_name, "status": status, "output": result}
+        step_outputs.append({"step_number": idx, "tool": tool_name, "input": input_payload, "output": result})
+
+        yield _sse("step_completed" if status == "success" else "step_failed", step_data)
+
+        if "error" in result:
+            mission.status = "needs_attention"
+            mission.last_event = "step_failed"
+            db.commit()
+            break
+
+    # 5. Critic
+    verdict = critic.validate_result(mission.goal, step_outputs)
+    yield _sse("critic_verdict", verdict.to_dict())
+
+    # 6. Final synthesis
+    final_text = synthesize_final_answer(mission.goal, step_outputs)
+    mission.result = final_text
+    if verdict.verdict == "escalate":
+        mission.status = "escalated"
+    elif mission.status == "needs_attention":
+        mission.status = "done_with_issues"
+    else:
+        mission.status = "done"
+    mission.last_event = "mission_done"
+    db.commit()
+
+    yield _sse("mission_done", {
+        "mission_id": mission.id,
+        "status": mission.status,
+        "response": final_text,
+        "critic": verdict.to_dict(),
+    })
+
+
+# ── Recovery & state ───────────────────────────────────────────────
+
 def recover_stale_missions(db: Session, minutes: int = 30) -> list[dict]:
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
     stale = []
@@ -222,6 +284,7 @@ def recover_stale_missions(db: Session, minutes: int = 30) -> list[dict]:
             stale.append({"mission_id": m.id, "status": m.status})
     db.commit()
     return stale
+
 
 def state_snapshot(db: Session, proposal_id: str | None = None, mission_id: str | None = None):
     proposal = db.get(Proposal, proposal_id) if proposal_id else None
