@@ -85,15 +85,76 @@ export default function WorkspacePage() {
     inputRef.current?.focus();
   }, []);
 
+  /* ---- Demo mode state ---- */
+  const [isDemoMode, setIsDemoMode] = useState(false);
+
+  /* ---- Response mode state ---- */
+  type ResponseMode = "detailed" | "balanced" | "concise";
+  const [responseMode, setResponseMode] = useState<ResponseMode>("balanced");
+  const responseModeOptions = [
+    { 
+      id: "detailed" as ResponseMode, 
+      label: "Detailed", 
+      desc: "Teacher-style explanation with step-by-step reasoning, alternative strategies, and learning insights",
+      icon: "book"
+    },
+    { 
+      id: "balanced" as ResponseMode, 
+      label: "Balanced", 
+      desc: "Clear answer with key reasoning points - best for most tasks",
+      icon: "scale"
+    },
+    { 
+      id: "concise" as ResponseMode, 
+      label: "Concise", 
+      desc: "Direct answer with minimal explanation - fastest responses",
+      icon: "zap"
+    },
+  ];
+
   /* ---- Fetch available models from all providers on mount ---- */
   useEffect(() => {
     fetch("/api/mission-control/health")
       .then((r) => r.json())
       .then((data) => {
-        const models: {provider: string; model: string; label: string}[] = data?.models ?? [];
-        setAvailableModels(models);
-        const current: string = data?.selectedModel ?? "";
-        setSelectedModel(models.find(m => m.model === current)?.model ?? models[0]?.model ?? "");
+        // Parse the new health response format
+        const modelChecks = data?.models?.checks ?? [];
+        const models = modelChecks
+          .filter((m: { available: boolean }) => m.available)
+          .map((m: { model: string; name: string; provider: string }) => ({
+            provider: m.provider,
+            model: m.model,
+            label: m.provider === "demo" ? "Demo Mode (Simulated)" : `${m.name} (${m.provider})`,
+          }));
+        
+        // If no models available, show all as options anyway
+        if (models.length === 0) {
+          const allModels = modelChecks.map((m: { model: string; name: string; provider: string }) => ({
+            provider: m.provider,
+            model: m.model,
+            label: `${m.name} (${m.provider})`,
+          }));
+          setAvailableModels(allModels);
+        } else {
+          setAvailableModels(models);
+        }
+        
+        const firstModel = models[0]?.model ?? modelChecks[0]?.model ?? "";
+        setSelectedModel(firstModel);
+        
+        // Check if we're in demo mode
+        const onlyDemoAvailable = models.length === 1 && models[0]?.provider === "demo";
+        setIsDemoMode(onlyDemoAvailable);
+        
+        if (onlyDemoAvailable) {
+          setTimeline((prev) => [...prev, "Demo Mode Active: Showing simulated AI responses. Configure an AI provider in settings for real AI."]);
+        }
+        
+        // Show recommendations in timeline
+        const recommendations = data?.recommendations ?? [];
+        if (recommendations.length > 0 && recommendations[0] !== "All systems operational. Ready to process requests.") {
+          setTimeline((prev) => [...prev, ...recommendations.map((r: string) => `System: ${r}`)]);
+        }
       })
       .catch(() => {/* health endpoint unreachable */});
   }, []);
@@ -119,7 +180,12 @@ export default function WorkspacePage() {
       const resp = await fetch("/api/mission-control/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, message: text, model: selectedModel || undefined }),
+        body: JSON.stringify({ 
+          sessionId, 
+          message: text, 
+          model: selectedModel || undefined,
+          responseMode: responseMode,
+        }),
       });
 
       if (!resp.ok) {
@@ -158,6 +224,8 @@ export default function WorkspacePage() {
             const data = JSON.parse(line.slice(6)) as {
               type: string;
               agent?: string;
+              agentName?: string;
+              department?: string;
               label?: string;
               step?: number;
               totalSteps?: number;
@@ -168,17 +236,41 @@ export default function WorkspacePage() {
               provider?: string;
               tokensUsed?: number;
               token?: string;
+              toolCalls?: Array<{ tool: string; result: unknown }>;
+              intent?: string;
+              confidence?: number;
+              from?: string;
+              to?: string;
+              reason?: string;
+              success?: boolean;
+              fallbacksUsed?: string[];
+              recoverable?: boolean;
+              suggestion?: string;
+              responseMode?: string;
+              responseModeLabel?: string;
             };
 
-            if (data.type === "progress") {
+            if (data.type === "classification") {
+              // Intent classification result - show in timeline
+              setTimeline((prev) => [...prev, `Intent: ${data.intent} (${Math.round((data.confidence ?? 0) * 100)}% confidence)`]);
+            } else if (data.type === "model_switch") {
+              // Model fallback occurred
+              setTimeline((prev) => [...prev, `Switching model: ${data.from} -> ${data.to} (${data.reason?.slice(0, 50)}...)`]);
+            } else if (data.type === "pipeline") {
+              // Pipeline info
+              const agents = (data as unknown as { agents: Array<{name: string}> }).agents;
+              setTimeline((prev) => [...prev, `Pipeline: ${agents.map(a => a.name).join(" -> ")}`]);
+            } else if (data.type === "progress") {
               // New agent step starting — reset streaming text
               setStreamingText("");
               setCurrentProgress({
-                agent: data.agent ?? "agent",
+                agent: data.agentName ?? data.agent ?? "Agent",
                 label: data.label ?? "Thinking…",
                 step: data.step ?? 1,
                 totalSteps: data.totalSteps ?? 1,
               });
+              // Add to timeline
+              setTimeline((prev) => [...prev, `${data.agentName ?? data.agent} (${data.department ?? 'Department'}) is working...`]);
             } else if (data.type === "token") {
               // Live token from agent — append to streaming display
               setStreamingText((prev) => prev + (data.token ?? ""));
@@ -186,28 +278,41 @@ export default function WorkspacePage() {
               // Agent finished — clear streaming, add final message
               setStreamingText("");
               setCurrentProgress(null);
+              const agentLabel = data.agentName ?? data.agent ?? "Agent";
+              const deptLabel = data.department ? ` (${data.department})` : "";
+              const demoIndicator = data.model === "demo-mode" ? " [Demo]" : "";
               setChatMessages((prev) => [
                 ...prev,
                 {
                   id: `msg_${Date.now()}_${data.step}`,
                   role: "agent" as const,
-                  agent: data.agent,
+                  agent: `${agentLabel}${deptLabel}${demoIndicator}`,
                   text: data.message ?? "",
                   timestamp: data.timestamp ?? new Date().toISOString(),
                 },
               ]);
+              // Log tool calls if any
+              if (data.toolCalls && data.toolCalls.length > 0) {
+                setTimeline((prev) => [
+                  ...prev,
+                  `${agentLabel} used tools: ${data.toolCalls!.map(t => t.tool).join(", ")}`,
+                ]);
+              }
             } else if (data.type === "error") {
               setCurrentProgress(null);
+              const suggestion = data.suggestion ? `\n\n${data.suggestion}` : "";
+              const recoveryHint = data.recoverable ? "\n\nThis error may be temporary - try again in a moment." : "";
               setChatMessages((prev) => [
                 ...prev,
                 {
                   id: `msg_err_${Date.now()}`,
                   role: "agent",
                   agent: "system",
-                  text: `Error: ${data.error ?? "Agent pipeline failed."}`,
+                  text: `Error: ${data.error ?? "Agent pipeline failed."}${suggestion}${recoveryHint}`,
                   timestamp: new Date().toISOString(),
                 },
               ]);
+              setTimeline((prev) => [...prev, `Error: ${data.error?.slice(0, 50)}...`]);
             }
             // "done" type — pipeline complete, nothing to render
           } catch {
@@ -231,7 +336,7 @@ export default function WorkspacePage() {
       setCurrentProgress(null);
       inputRef.current?.focus();
     }
-  }, [chatInput, sending, sessionId, selectedModel]);
+  }, [chatInput, sending, sessionId, selectedModel, responseMode]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -416,7 +521,28 @@ export default function WorkspacePage() {
         ) : (
           <span className={styles.noProvider}>No LLM provider — start Ollama locally or set GEMINI_API_KEY</span>
         )}
+        
+        {/* Response Mode Selector */}
+        <div className={styles.responseModeGroup}>
+          <span className={styles.responseModeLabel}>Response Style:</span>
+          <div className={styles.responseModeButtons}>
+            {responseModeOptions.map((mode) => (
+              <button
+                key={mode.id}
+                className={`${styles.responseModeBtn} ${responseMode === mode.id ? styles.responseModeActive : ""}`}
+                onClick={() => setResponseMode(mode.id)}
+                title={mode.desc}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        
         <small className={styles.connBadge}>{connectionLabel}</small>
+        {isDemoMode && (
+          <small className={styles.demoBadge}>Demo Mode - Simulated AI Responses</small>
+        )}
       </header>
 
       <section className={styles.panes}>
@@ -443,12 +569,24 @@ export default function WorkspacePage() {
               <div className={styles.welcome}>
                 <h4>What would you like the swarm to do?</h4>
                 <p>Type a command below — plan a strategy, research a topic, assign tasks, or ask for a status update.</p>
+                <div className={styles.responseModeHint}>
+                  <strong>Current Mode: {responseModeOptions.find(m => m.id === responseMode)?.label}</strong>
+                  <br />
+                  {responseModeOptions.find(m => m.id === responseMode)?.desc}
+                  {responseMode === "detailed" && (
+                    <div style={{ marginTop: '8px', fontSize: '0.75rem', opacity: 0.8 }}>
+                      Detailed mode includes: reasoning explanation, alternative strategies, and learning insights
+                    </div>
+                  )}
+                </div>
                 <div className={styles.suggestions}>
                   {[
                     "Plan a go-to-market strategy for our AI product",
-                    "Research the latest trends in autonomous agents",
-                    "Build a landing page with dark theme",
-                    "What is the current mission status?",
+                    "Build a REST API for user authentication",
+                    "Research competitors in the AI agent space",
+                    "Create a marketing campaign for product launch",
+                    "Review the codebase for security vulnerabilities",
+                    "Analyze our budget and ROI projections",
                   ].map((s) => (
                     <button
                       key={s}

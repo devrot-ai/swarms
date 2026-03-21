@@ -1,14 +1,34 @@
+/**
+ * Chat API Route - AI Agentic Company
+ * 
+ * This route handles user messages and orchestrates the AI agents
+ * with robust fallback logic and error recovery.
+ */
+
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
-import { agentChatStream, isAnyProviderAvailable } from "@/lib/mission-control/llm";
-import { missionEventBus } from "@/lib/mission-control/eventBus";
+import { agentExecutor } from "@/lib/mission-control/agents/executor";
+import { ModelProvider } from "@/lib/mission-control/models/provider";
+import { taskQueue, createAgentTask } from "@/lib/mission-control/queue/taskQueue";
+import { agentMetadata, type AgentId } from "@/lib/mission-control/agents";
 import { missionStore } from "@/lib/mission-control/stores";
-import { MissionEvent } from "@/lib/mission-control/types";
+import { missionEventBus } from "@/lib/mission-control/eventBus";
+import type { MissionEvent } from "@/lib/mission-control/types";
+import { 
+  type ResponseMode, 
+  getResponseModePrompt, 
+  responseModes,
+  getDemoResponseSuffix,
+  getContextMultiplier,
+} from "@/lib/mission-control/responseMode";
+import { contextManager } from "@/lib/mission-control/contextManager";
 
 interface ChatInput {
   sessionId: string;
   message: string;
-  model?: string;
+  preferredModel?: string;
+  preferredProvider?: string;
+  responseMode?: ResponseMode;
 }
 
 function nowIso() {
@@ -19,7 +39,119 @@ function id(prefix: string) {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
 }
 
-function emit(
+export const maxDuration = 60;
+
+// Intent to agent pipeline mapping
+const intentToAgentPipeline: Record<string, AgentId[]> = {
+  strategic_planning: ["ceo_agent", "coo_agent"],
+  operational_planning: ["coo_agent", "worker_agent"],
+  technical_build: ["cto_agent", "worker_agent"],
+  technical_review: ["cto_agent", "qa_agent"],
+  research: ["research_agent"],
+  marketing: ["marketing_agent"],
+  financial: ["cfo_agent"],
+  hr_planning: ["hr_agent"],
+  legal_compliance: ["legal_agent"],
+  qa_testing: ["qa_agent"],
+  infrastructure: ["devops_agent"],
+  design: ["design_agent"],
+  status_report: ["coo_agent"],
+  general: ["ceo_agent"],
+};
+
+// Get system prompt for each agent
+function getAgentSystemPrompt(agentId: AgentId): string {
+  const prompts: Record<AgentId, string> = {
+    ceo_agent: `You are the CEO Agent of an AI-powered company. You are the strategic leader responsible for:
+- Setting company vision and strategic direction
+- Making high-level decisions on projects and initiatives
+- Approving major plans and budgets
+- Coordinating between departments
+Be decisive, strategic, and focus on business impact.`,
+    
+    coo_agent: `You are the COO Agent responsible for operations and execution. Your role is to:
+- Transform strategic plans into actionable tasks
+- Coordinate cross-functional execution
+- Manage project timelines and dependencies
+- Ensure operational efficiency
+Be practical, organized, and action-oriented.`,
+    
+    cto_agent: `You are the CTO Agent, the technical leader of the company. Your responsibilities:
+- Technical architecture decisions
+- Technology strategy and roadmap
+- Code quality and best practices
+- Security and performance standards
+Be thorough, technically precise, and security-conscious.`,
+    
+    cfo_agent: `You are the CFO Agent, responsible for financial management and planning.
+- Budget planning and allocation
+- Financial analysis and forecasting
+- ROI evaluation for initiatives
+- Cost optimization
+Be analytical, numbers-focused, and risk-aware.`,
+    
+    marketing_agent: `You are the Marketing Agent, responsible for growth and brand communications.
+- Marketing strategy and campaigns
+- Brand messaging and positioning
+- Content creation and distribution
+- Market research and competitive analysis
+Be creative, customer-focused, and data-driven.`,
+    
+    hr_agent: `You are the HR Agent, responsible for people operations and culture.
+- Team capacity planning
+- Resource allocation
+- Skills assessment
+- Team structure recommendations
+Be people-focused, analytical, and supportive.`,
+    
+    legal_agent: `You are the Legal Agent, responsible for compliance and legal matters.
+- Contract review and negotiation
+- Regulatory compliance
+- Risk assessment
+- Policy development
+Be thorough, cautious, and compliance-focused.`,
+    
+    qa_agent: `You are the QA Agent, responsible for quality assurance and testing.
+- Test planning and execution
+- Quality standards enforcement
+- Bug identification and tracking
+- Test automation strategy
+Be detail-oriented, systematic, and quality-focused.`,
+    
+    devops_agent: `You are the DevOps Agent, responsible for infrastructure and deployments.
+- Infrastructure management
+- CI/CD pipeline maintenance
+- Deployment automation
+- Monitoring and alerting
+Be reliability-focused, automation-first, and proactive.`,
+    
+    design_agent: `You are the Design Agent, responsible for user experience and visual design.
+- User experience design
+- Visual design and branding
+- Design system maintenance
+- User research insights
+Be user-centered, creative, and accessibility-conscious.`,
+    
+    research_agent: `You are the Research Agent, responsible for information gathering and analysis.
+- Market research and analysis
+- Competitive intelligence
+- Technical research
+- Trend analysis
+Be thorough, evidence-based, and insightful.`,
+    
+    worker_agent: `You are a Worker Agent, responsible for executing specific tasks assigned to you.
+- Execute assigned tasks efficiently
+- Follow instructions precisely
+- Report progress and blockers
+- Produce quality deliverables
+Be efficient, precise, and communicative.`,
+  };
+
+  return prompts[agentId];
+}
+
+// Emit mission event for tracking
+function emitMissionEvent(
   sessionId: string,
   agentId: string,
   type: MissionEvent["type"],
@@ -28,13 +160,14 @@ function emit(
   status: MissionEvent["status"],
 ) {
   const auditId = id("aud");
+  
   missionStore.appendAudit({
     auditId,
     sessionId,
     timestampUtc: nowIso(),
     actorId: agentId,
-    action: `chat.${type.toLowerCase()}`,
-    details: { message },
+    action: `agent.${type.toLowerCase()}`,
+    details: { message: message.slice(0, 500) },
   });
 
   missionEventBus.publish({
@@ -46,190 +179,53 @@ function emit(
     confidence,
     uncertainty: 1 - confidence,
     status,
-    message,
+    message: message.slice(0, 200),
     auditId,
     artifactId: null,
   });
 }
 
-/* ------------------------------------------------------------------ */
-/* Classify what the user wants → route to the right agent pipeline   */
-/* ------------------------------------------------------------------ */
-function classifyIntent(msg: string): "plan" | "research" | "task" | "status" | "general" {
-  const lower = msg.toLowerCase();
-  if (/plan|strategy|objective|kpi|goal|roadmap/i.test(lower)) return "plan";
-  if (/research|find|search|look up|analyze|investigate/i.test(lower)) return "research";
-  if (/task|build|create|make|deploy|fix|implement|code|design/i.test(lower)) return "task";
-  if (/status|progress|update|how.*going|what.*done/i.test(lower)) return "status";
-  return "general";
-}
-
-/* ------------------------------------------------------------------ */
-/* Build context about the current session for the LLM                */
-/* ------------------------------------------------------------------ */
-function buildSessionContext(sessionId: string): string {
+// Build context from session history with extended context management
+function buildSessionContext(sessionId: string, responseMode: ResponseMode = "balanced"): string {
   const audit = missionStore.getAudits(sessionId);
   const artifacts = missionStore.getArtifacts(sessionId);
   const session = missionStore.getSession(sessionId);
+  
+  // Get context multiplier based on response mode
+  const contextMultiplier = getContextMultiplier(responseMode);
+  const maxTurns = Math.floor(10 * contextMultiplier);
 
   const parts: string[] = [];
+  
   if (session) {
     parts.push(`Mission: ${session.mission.objective}`);
     parts.push(`Status: ${session.status}`);
-    parts.push(`Departments: ${session.mission.requiredDepartments.join(", ")}`);
   }
+  
+  // Add conversation context from context manager
+  const conversationContext = contextManager.getFormattedContext(sessionId, maxTurns);
+  if (conversationContext) {
+    parts.push(`\n${conversationContext}`);
+  }
+  
+  // Get context stats for transparency
+  const stats = contextManager.getStats(sessionId);
+  if (stats.turnCount > 0) {
+    parts.push(`\n[Context: ${stats.turnCount} turns, ${stats.keyTopicsCount} topics tracked]`);
+  }
+  
   if (audit.length > 0) {
-    parts.push(`Recent activity (${audit.length} total):`);
+    parts.push(`\nRecent activity (${audit.length} total):`);
     for (const a of audit.slice(-5)) {
       parts.push(`  - ${a.timestampUtc.slice(11, 19)} ${a.action}`);
     }
   }
+  
   if (artifacts.length > 0) {
-    parts.push(`Artifacts produced: ${artifacts.map((a) => a.title).join(", ")}`);
+    parts.push(`\nArtifacts produced: ${artifacts.map((a) => a.title).join(", ")}`);
   }
+  
   return parts.join("\n");
-}
-
-/* ------------------------------------------------------------------ */
-/* Pipeline steps: define agent sequence for each intent               */
-/* ------------------------------------------------------------------ */
-interface PipelineStep {
-  agentId: string;
-  thinkingLabel: string;
-  eventType: MissionEvent["type"];
-  buildPrompt: (message: string, context: string, prevResults: string[]) => string;
-}
-
-function getPipeline(intent: string): PipelineStep[] {
-  switch (intent) {
-    case "plan":
-      return [
-        {
-          agentId: "ceo_agent",
-          thinkingLabel: "CEO Agent is crafting the mission plan…",
-          eventType: "THOUGHT",
-          buildPrompt: (msg) =>
-            `Create a detailed mission plan for: "${msg}"\n\n` +
-            `Show your reasoning step by step. Include:\n` +
-            `1. **Mission Objective** — What exactly are we trying to achieve?\n` +
-            `2. **Departments to Activate** — Which teams, and why each is needed\n` +
-            `3. **KPIs** — Measurable success criteria with specific targets\n` +
-            `4. **Priority Assignments** — P0/P1/P2 with justification\n` +
-            `5. **Risk Assessment** — What could go wrong and how to mitigate\n\n` +
-            `Think through each decision and explain your reasoning. Be specific, not generic.`,
-        },
-        {
-          agentId: "coo_agent",
-          thinkingLabel: "COO Agent is breaking down into actionable tasks…",
-          eventType: "ACTION",
-          buildPrompt: (msg, _ctx, prev) =>
-            `The CEO created this plan:\n${prev[0]}\n\n` +
-            `Break this into concrete, ordered tasks. For EACH task provide:\n` +
-            `- **Task title** — specific and descriptive\n` +
-            `- **What to do** — detailed implementation steps, not just a title\n` +
-            `- **Assigned to** — which agent/department\n` +
-            `- **Priority** — P0/P1/P2\n` +
-            `- **Estimated time** — realistic estimate\n` +
-            `- **Dependencies** — what must be done first\n\n` +
-            `Be SPECIFIC. Don't use placeholders like [PENDING]. Describe the actual work.`,
-        },
-      ];
-    case "research":
-      return [
-        {
-          agentId: "research_agent",
-          thinkingLabel: "Research Agent is investigating the topic…",
-          eventType: "THOUGHT",
-          buildPrompt: (msg) =>
-            `Research this topic and produce ACTUAL FINDINGS right now: "${msg}"\n\n` +
-            `DO NOT say "I'll analyze" or "Research initiated". Produce the actual research:\n\n` +
-            `## Key Findings\n` +
-            `(Write 5-10 specific, detailed findings with real data)\n\n` +
-            `## Analysis\n` +
-            `(What the evidence tells us — specific insights)\n\n` +
-            `## Comparisons\n` +
-            `(Alternatives, pros/cons in a structured format)\n\n` +
-            `## Recommendations\n` +
-            `(Specific, actionable next steps)\n\n` +
-            `Start writing findings immediately. Be thorough and specific.`,
-        },
-      ];
-    case "task":
-      return [
-        {
-          agentId: "coo_agent",
-          thinkingLabel: "COO Agent is planning the implementation approach…",
-          eventType: "ACTION",
-          buildPrompt: (msg) =>
-            `The user wants to build: "${msg}"\n\n` +
-            `Create a detailed technical implementation plan:\n` +
-            `1. **Architecture** — technical approach and design decisions\n` +
-            `2. **File Structure** — what files to create, their purpose\n` +
-            `3. **Implementation Steps** — ordered list with specifics\n` +
-            `4. **Technology Choices** — what tools/libraries/frameworks to use and why\n` +
-            `5. **Key Components** — describe the main pieces of the implementation\n\n` +
-            `Be technically specific. This plan will be handed to a developer agent who will write the actual code.`,
-        },
-        {
-          agentId: "worker_agent",
-          thinkingLabel: "Worker Agent is writing the code…",
-          eventType: "THOUGHT",
-          buildPrompt: (msg, _ctx, prev) =>
-            `You need to build: "${msg}"\n\nThe COO's implementation plan:\n${prev[0]}\n\n` +
-            `NOW PRODUCE THE ACTUAL CODE. Write complete, working, production-ready code.\n\n` +
-            `Requirements:\n` +
-            `- Use markdown code blocks with language tags (e.g. \`\`\`html, \`\`\`css, \`\`\`typescript)\n` +
-            `- Write ALL necessary files — every HTML, CSS, JS file needed\n` +
-            `- Include file names as the first comment in each code block\n` +
-            `- Make the code complete and ready to use — not snippets or placeholders\n` +
-            `- Add brief explanations between code blocks\n\n` +
-            `Start building now. Show the COMPLETE implementation with all code.`,
-        },
-      ];
-    case "status":
-      return [
-        {
-          agentId: "pm_agent",
-          thinkingLabel: "PM Agent is compiling status report…",
-          eventType: "THOUGHT",
-          buildPrompt: (_msg, ctx) =>
-            `The user wants a status update.\n\nCurrent mission context:\n${ctx || "No prior activity recorded yet."}\n\n` +
-            `Provide a detailed status report:\n` +
-            `1. **Overall Progress** — percentage complete, current phase\n` +
-            `2. **Completed Work** — what's been done, with specifics\n` +
-            `3. **In Progress** — what's currently being worked on\n` +
-            `4. **Blockers & Risks** — anything slowing things down\n` +
-            `5. **Next Steps** — what happens next, with timeline\n\n` +
-            `Be specific and data-driven.`,
-        },
-      ];
-    default:
-      return [
-        {
-          agentId: "ceo_agent",
-          thinkingLabel: "CEO Agent is analyzing your request…",
-          eventType: "THOUGHT",
-          buildPrompt: (msg) =>
-            `The user says: "${msg}"\n\n` +
-            `Analyze this request thoroughly. Show your reasoning.\n` +
-            `If this involves building something, outline the technical approach.\n` +
-            `If it's a question, answer with depth and supporting details.\n` +
-            `Be specific and produce useful, actionable output.`,
-        },
-        {
-          agentId: "coo_agent",
-          thinkingLabel: "COO Agent is creating action items…",
-          eventType: "ACTION",
-          buildPrompt: (msg, _ctx, prev) =>
-            `The CEO's analysis:\n${prev[0]}\n\nOriginal request: "${msg}"\n\n` +
-            `Create specific, actionable next steps:\n` +
-            `- **What** — exactly what needs to be done\n` +
-            `- **Who** — which agent/department handles it\n` +
-            `- **Expected Outcome** — what the deliverable looks like\n\n` +
-            `Be concrete and practical, not vague.`,
-        },
-      ];
-  }
 }
 
 export async function POST(req: NextRequest) {
@@ -243,30 +239,32 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { sessionId, message, model } = body;
-    const intent = classifyIntent(message);
+    const { sessionId, message, preferredProvider } = body;
+    const responseMode: ResponseMode = body.responseMode ?? "balanced";
+    const modeConfig = responseModes[responseMode];
 
-    /* -- Emit user message into the event stream -- */
-    emit(sessionId, "user", "THOUGHT", `User: ${message}`, 1.0, "RUNNING");
+    // Emit user message
+    emitMissionEvent(sessionId, "user", "THOUGHT", `User: ${message}`, 1.0, "RUNNING");
 
-    /* -- Check that at least one LLM provider is available -- */
-    const anyUp = await isAnyProviderAvailable();
-    if (!anyUp) {
-      return NextResponse.json(
-        {
-          error:
-            "No LLM provider available. Set OPENAI_API_KEY or GEMINI_API_KEY in your environment, or start Ollama locally.",
-        },
-        { status: 503 },
-      );
-    }
+    // Track conversation in context manager
+    contextManager.addTurn(sessionId, {
+      role: "user",
+      content: message,
+      responseMode: responseMode,
+    });
 
-    /* -- Stream agent responses one at a time via SSE -- */
-    const context = buildSessionContext(sessionId);
-    const pipeline = getPipeline(intent);
+    // Create a task for this request
+    const mainTask = createAgentTask(
+      "orchestrator",
+      "process_message",
+      message,
+      { sessionId, message },
+      { priority: "high" }
+    );
 
-    emit(sessionId, "system", "STATUS", `Routing to agents (intent: ${intent})…`, 0.95, "RUNNING");
+    taskQueue.updateTaskStatus(mainTask.id, "running");
 
+    // Stream responses
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
@@ -275,67 +273,171 @@ export async function POST(req: NextRequest) {
         };
 
         try {
-          const prevResults: string[] = [];
+          // Step 1: Classify intent with fallback
+          send({ type: "progress", agent: "orchestrator", agentName: "Orchestrator", label: "Analyzing your request...", step: 1, totalSteps: 3 });
+          
+          const classification = await agentExecutor.classifyIntent(message);
+          
+          send({
+            type: "classification",
+            intent: classification.intent,
+            confidence: classification.confidence,
+            reasoning: classification.reasoning,
+            model: classification.model,
+          });
 
-          for (let i = 0; i < pipeline.length; i++) {
-            const step = pipeline[i];
+          // Get the agent pipeline
+          const agentIds = intentToAgentPipeline[classification.intent] ?? ["ceo_agent"];
+          
+          send({
+            type: "pipeline",
+            agents: agentIds.map(aid => ({
+              id: aid,
+              name: agentMetadata[aid].name,
+              department: agentMetadata[aid].department,
+            })),
+          });
 
-            // Notify frontend that this agent is now thinking
+          // Build context with extended context management
+          const context = buildSessionContext(sessionId, responseMode);
+          const previousResults: string[] = [];
+
+          // Step 2: Execute each agent in the pipeline
+          for (let i = 0; i < agentIds.length; i++) {
+            const agentId = agentIds[i];
+            const meta = agentMetadata[agentId];
+
             send({
               type: "progress",
-              agent: step.agentId,
+              agent: agentId,
+              agentName: meta.name,
+              department: meta.department,
               step: i + 1,
-              totalSteps: pipeline.length,
-              label: step.thinkingLabel,
+              totalSteps: agentIds.length,
+              label: `${meta.name} is ${meta.description.toLowerCase()}...`,
             });
 
-            const prompt = step.buildPrompt(message, context, prevResults);
+            // Build prompt with context from previous agents
+            let agentPrompt = message;
+            if (previousResults.length > 0) {
+              agentPrompt = `Based on the previous analysis:\n\n${previousResults.map((r, idx) => {
+                const prevAgent = agentMetadata[agentIds[idx]];
+                return `--- ${prevAgent.name} (${prevAgent.department}) ---\n${r}`;
+              }).join("\n\n")}\n\nNow, the user's request: ${message}\n\nProvide your analysis and recommendations from your perspective as ${meta.name}.`;
+            }
 
-            // Stream tokens so the user sees the agent thinking in real time
-            const result = await agentChatStream(
-              step.agentId,
-              prompt,
-              (token) => {
-                send({
-                  type: "token",
-                  agent: step.agentId,
-                  token,
-                  step: i + 1,
-                });
-              },
-              context,
-              model,
+            if (context) {
+              agentPrompt = `CONTEXT:\n${context}\n\n${agentPrompt}`;
+            }
+
+            // Add response mode instruction
+            const responseModeInstruction = getResponseModePrompt(responseMode);
+            const systemPrompt = getAgentSystemPrompt(agentId) + "\n\n" + responseModeInstruction;
+
+            // Execute agent with fallback
+            const result = await agentExecutor.execute(
+              agentId,
+              agentPrompt,
+              systemPrompt,
+              {},
+              {
+                preferredProvider: preferredProvider as "openai" | "anthropic" | "google" | "groq" | undefined,
+                streamTokens: true,
+                responseMode: responseMode,
+                onToken: (token) => {
+                  send({
+                    type: "token",
+                    agent: agentId,
+                    token,
+                    step: i + 1,
+                  });
+                },
+                onModelSwitch: (from, to, reason) => {
+                  send({
+                    type: "model_switch",
+                    agent: agentId,
+                    from,
+                    to,
+                    reason,
+                  });
+                },
+              }
             );
-            prevResults.push(result.content);
 
-            // Emit to SSE event bus for timeline/audit panels
-            emit(
+            // Record result
+            previousResults.push(result.content);
+
+            // Emit event
+            emitMissionEvent(
               sessionId,
-              step.agentId,
-              step.eventType,
-              result.content,
-              0.88 + Math.random() * 0.1,
-              "RUNNING",
+              agentId,
+              "THOUGHT",
+              result.content.slice(0, 500),
+              result.success ? 0.9 : 0.5,
+              result.success ? "RUNNING" : "WARNING",
             );
 
-            // Send the complete agent response to the frontend stream
+            // Track agent response in context manager
+            contextManager.addTurn(sessionId, {
+              role: "agent",
+              content: result.content,
+              agentId: agentId,
+              responseMode: responseMode,
+              metadata: {
+                intent: classification.intent,
+                tokensUsed: result.tokensUsed,
+              },
+            });
+
+            // Send response
             send({
               type: "response",
-              agent: step.agentId,
+              agent: agentId,
+              agentName: meta.name,
+              department: meta.department,
               message: result.content,
               timestamp: nowIso(),
               step: i + 1,
-              totalSteps: pipeline.length,
-              tokensUsed: result.tokensUsed,
+              totalSteps: agentIds.length,
               model: result.model,
-              provider: result.provider,
+              tokensUsed: result.tokensUsed,
+              fallbacksUsed: result.fallbacksUsed,
+              success: result.success,
+              error: result.error,
+              responseMode: responseMode,
+              responseModeLabel: modeConfig.label,
             });
+
+            // If this agent failed completely, we still continue to next agent
           }
 
-          send({ type: "done", intent });
+          // Mark task complete
+          taskQueue.updateTaskStatus(mainTask.id, "completed", { 
+            agentsUsed: agentIds.length,
+            intent: classification.intent,
+          });
+
+          // Send completion
+          send({
+            type: "done",
+            intent: classification.intent,
+            agentsUsed: agentIds.length,
+            timestamp: nowIso(),
+            taskId: mainTask.id,
+          });
+
         } catch (err) {
           const msg = err instanceof Error ? err.message : "Unknown error";
-          send({ type: "error", error: msg });
+          console.error("Agent pipeline error:", msg);
+          
+          taskQueue.updateTaskStatus(mainTask.id, "failed", undefined, msg);
+          
+          send({ 
+            type: "error", 
+            error: msg,
+            recoverable: true,
+            suggestion: "Try again or check your AI provider configuration.",
+          });
         } finally {
           controller.close();
         }
@@ -351,10 +453,12 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown error";
+    console.error("Chat route error:", msg);
     return NextResponse.json(
       {
         error: "Failed to process chat message.",
         details: msg,
+        suggestion: "Check server logs for more details.",
       },
       { status: 500 },
     );

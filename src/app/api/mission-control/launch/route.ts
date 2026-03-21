@@ -1,18 +1,18 @@
+/**
+ * Launch API - Creates a new mission workspace with AI agents
+ */
+
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
-import { startMissionSession } from "@/lib/mission-control/missionControl";
-import { buildCeoPlan } from "@/lib/mission-control/ceoAgent";
-import { buildCooTasks } from "@/lib/mission-control/cooAgent";
-import { agentChat, isAnyProviderAvailable } from "@/lib/mission-control/llm";
-import { missionEventBus } from "@/lib/mission-control/eventBus";
 import { missionStore } from "@/lib/mission-control/stores";
-import { userKeyStore } from "@/lib/mission-control/userKeyStore";
-import { MissionEvent } from "@/lib/mission-control/types";
+import { missionEventBus } from "@/lib/mission-control/eventBus";
+import { agents, agentMetadata } from "@/lib/mission-control/agents";
+import type { MissionSession, AgentDefinition, TaskQueueItem, MissionEvent } from "@/lib/mission-control/types";
 
 interface LaunchInput {
-  uid: string;
-  template?: "CEO" | "Marketing" | "Engineering" | "Design" | "Quick Task";
-  modelMode: "default" | "apikey" | "ollama";
+  uid?: string;
+  objective?: string;
+  template?: "CEO" | "Marketing" | "Engineering" | "Design" | "Research" | "Quick Task";
 }
 
 function nowIso() {
@@ -23,29 +23,30 @@ function id(prefix: string) {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
 }
 
-function templateBrief(template: LaunchInput["template"]) {
+function templateBrief(template: LaunchInput["template"]): string {
   switch (template) {
     case "CEO":
-      return "Plan mission objectives and KPIs for a safe multi-agent launch.";
+      return "Create a comprehensive strategic plan with mission objectives, KPIs, and department assignments.";
     case "Marketing":
-      return "Create a launch campaign with citations and testable deliverables.";
+      return "Develop a marketing campaign with target audience analysis, messaging, and channel strategy.";
     case "Engineering":
-      return "Build and validate orchestration APIs and audit-safe runtime logic.";
+      return "Plan and implement a technical solution with architecture, code, and testing.";
     case "Design":
-      return "Design a realtime mission workspace with timeline, thinking and artifacts.";
+      return "Design a user experience with wireframes, components, and accessibility considerations.";
+    case "Research":
+      return "Conduct thorough research on the topic with findings, analysis, and recommendations.";
     default:
-      return "Complete a lightweight mission with safe defaults and fast iteration.";
+      return "Complete a task efficiently with clear deliverables and quality checks.";
   }
 }
 
-function emitTrace(
+function emitEvent(
   sessionId: string,
   agentId: string,
   type: MissionEvent["type"],
   message: string,
   confidence: number,
   status: MissionEvent["status"],
-  data: Record<string, unknown>,
 ) {
   const auditId = id("aud");
   missionStore.appendAudit({
@@ -53,8 +54,8 @@ function emitTrace(
     sessionId,
     timestampUtc: nowIso(),
     actorId: agentId,
-    action: `trace.${type.toLowerCase()}`,
-    details: data,
+    action: `launch.${type.toLowerCase()}`,
+    details: { message: message.slice(0, 500) },
   });
 
   missionEventBus.publish({
@@ -72,42 +73,45 @@ function emitTrace(
   });
 }
 
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as LaunchInput;
 
-    if (!body?.uid || !body?.modelMode) {
-      return NextResponse.json(
-        { error: "uid and modelMode are required." },
-        { status: 400 },
-      );
-    }
+    const sessionId = id("sess");
+    const objective = body.objective || templateBrief(body.template);
 
-    if (body.modelMode === "apikey" && !userKeyStore.get(body.uid)) {
-      return NextResponse.json(
-        { error: "No validated API key found for user. Validate key before launch." },
-        { status: 400 },
-      );
-    }
-    // Ollama does not require a stored API key.
+    // Create agent definitions
+    const agentDefs: AgentDefinition[] = Object.entries(agentMetadata).map(([agentId, meta]) => ({
+      agentId,
+      type: agentId.includes("worker") ? "worker" : "department",
+      name: meta.name,
+      department: meta.department as MissionSession["mission"]["requiredDepartments"][number],
+      responsibility: meta.description,
+      tools: [],
+      safetyRules: ["Audit all actions", "Request approval for destructive operations"],
+    }));
 
-    const brief = body.template
-      ? templateBrief(body.template)
-      : "Autonomously orchestrate a full multi-agent mission. The AI decides which departments and agents to activate based on the objective.";
-    const ceo = buildCeoPlan({
-      userBrief: brief,
-      companyMemory: "Workspace launch follows validated onboarding path.",
-      riskPolicy: "Strict approval for destructive/external actions",
-    });
+    // Create task queue
+    const taskQueue: TaskQueueItem[] = [
+      { queueId: id("q"), name: "Session Created", status: "COMPLETED" },
+      { queueId: id("q"), name: "Agents Initialized", status: "COMPLETED" },
+      { queueId: id("q"), name: "Strategic Planning", status: "RUNNING" },
+      { queueId: id("q"), name: "Task Breakdown", status: "PENDING" },
+      { queueId: id("q"), name: "Execution", status: "PENDING" },
+    ];
 
-    const missionSession = startMissionSession({
+    // Create session
+    const session: MissionSession = {
+      sessionId,
       mission: {
-        projectName: `${body.template ?? "Auto"} Mission Workspace`,
-        objective: ceo.mission,
+        projectName: `${body.template ?? "Mission"} Workspace`,
+        objective,
         timeline: {
-          startDate: new Date().toISOString().slice(0, 10),
-          targetDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString().slice(0, 10),
-          milestones: ["Onboard", "Plan", "Execute", "Review"],
+          startDate: nowIso().slice(0, 10),
+          targetDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+          milestones: ["Plan", "Build", "Test", "Deploy"],
         },
         requiredDepartments: [
           "Program Management",
@@ -117,116 +121,141 @@ export async function POST(req: NextRequest) {
           "Frontend Realtime UX",
           "QA & Verification",
         ],
-        kpis: ceo.KPIs,
+        kpis: [
+          { name: "Task Completion Rate", target: ">= 95%" },
+          { name: "Quality Score", target: ">= 4.5/5" },
+          { name: "Time to Delivery", target: "Within timeline" },
+        ],
         computeBudget: {
-          tokenLimitTotal: ceo.budget_tokens.total,
-          maxTokensPerTask: ceo.budget_tokens.max_per_task,
-          costGuardrailUsd: 25,
+          tokenLimitTotal: 1000000,
+          maxTokensPerTask: 15000,
+          costGuardrailUsd: 50,
         },
-        uncertainty: 0.2,
+        uncertainty: 0.15,
       },
-    });
-
-    const coo = buildCooTasks({
-      mission: ceo.mission,
-      sessionId: missionSession.sessionId,
-      timelineDays: 7,
-      startDateUtc: nowIso(),
-    });
-
-    emitTrace(
-      missionSession.sessionId,
-      "system",
-      "STATUS",
-      "Mission workspace created — starting AI agent pipeline…",
-      0.95,
-      "RUNNING",
-      { trace: "trace.started" },
-    );
-
-    /* ------------------------------------------------------------------ */
-    /* Kick off real LLM agent work in the background (non-blocking).     */
-    /* Results stream into the workspace via SSE/event bus.               */
-    /* ------------------------------------------------------------------ */
-    const sid = missionSession.sessionId;
-    const anyProviderUp = await isAnyProviderAvailable();
-
-    if (anyProviderUp) {
-      // Fire-and-forget: run agent pipeline asynchronously
-      (async () => {
-        try {
-          emitTrace(sid, "system", "STATUS", "LLM provider connected — agents are thinking…", 0.95, "RUNNING", {});
-
-          // CEO agent analyses the mission
-          const ceoResponse = await agentChat(
-            "ceo_agent",
-            `You are launching a new mission workspace.\n\nMission brief: "${brief}"\n\n` +
-            `Think through this step by step and provide:\n` +
-            `1. **Mission Objective** — What exactly we're building/doing\n` +
-            `2. **Departments to Activate** — Which teams and why each is needed\n` +
-            `3. **KPIs** — Specific, measurable success criteria\n` +
-            `4. **Priority Assignments** — P0/P1/P2 with reasoning\n` +
-            `5. **Risk Assessment** — Potential issues and mitigations\n\n` +
-            `Be specific and detailed. Show your reasoning.`,
-            `Project: ${ceo.mission}`,
-          );
-          emitTrace(sid, "ceo_agent", "THOUGHT", ceoResponse.content, 0.92, "RUNNING", { model: ceoResponse.model, tokens: ceoResponse.tokensUsed });
-
-          // COO breaks it into tasks
-          const cooResponse = await agentChat(
-            "coo_agent",
-            `The CEO created this plan:\n${ceoResponse.content}\n\n` +
-            `Break this into specific, concrete tasks. For EACH task:\n` +
-            `- **Task title** — descriptive name\n` +
-            `- **What to do** — detailed steps, not just a title\n` +
-            `- **Assigned to** — which agent/department handles it\n` +
-            `- **Priority** — P0/P1/P2\n` +
-            `- **Estimated time** — realistic estimate\n\n` +
-            `Do NOT use [PENDING] placeholders. Describe actual work.`,
-            `Mission: ${ceo.mission}`,
-          );
-          emitTrace(sid, "coo_agent", "ACTION", cooResponse.content, 0.90, "RUNNING", { model: cooResponse.model, tokens: cooResponse.tokensUsed });
-
-          // Worker agent starts first task
-          const workerResponse = await agentChat(
-            "worker_agent",
-            `The COO assigned these tasks:\n${cooResponse.content}\n\n` +
-            `Pick the highest-priority task and START WORKING on it immediately.\n\n` +
-            `If code is required, write the ACTUAL CODE in markdown code blocks.\n` +
-            `If it's a planning/analysis task, produce the actual deliverable.\n\n` +
-            `Show:\n` +
-            `1. Which task you're working on\n` +
-            `2. Your approach\n` +
-            `3. The actual output (code, document, analysis, etc.)\n` +
-            `4. Status and any blockers`,
-            `Mission: ${ceo.mission}`,
-          );
-          emitTrace(sid, "worker_agent", "ACTION", workerResponse.content, 0.88, "RUNNING", { model: workerResponse.model, tokens: workerResponse.tokensUsed });
-
-          emitTrace(sid, "system", "STATUS", "Initial agent pipeline complete. Use the chat to give further instructions.", 0.95, "COMPLETED", {});
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : "Unknown agent error";
-          emitTrace(sid, "system", "STATUS", `Agent pipeline error: ${msg}`, 0.5, "BLOCKED", { error: msg });
-        }
-      })();
-    } else {
-      emitTrace(sid, "system", "STATUS",
-        "⚠ No LLM provider available. Start Ollama locally with `ollama serve`, or set GEMINI_API_KEY or OPENAI_API_KEY in your .env.local.",
-        0.5, "BLOCKED", {},
-      );
-    }
-
-    return NextResponse.json(
-      {
-        sessionId: missionSession.sessionId,
-        timeline: coo.tasks,
-        streaming: {
-          websocket: `/ws/session/${missionSession.sessionId}`,
-          sseFallback: `/api/mission-control/events/${missionSession.sessionId}`,
-        },
+      modelPolicy: {
+        defaultSafeModel: { provider: "openai", model: "openai/gpt-4o" },
+        activeModel: { provider: "openai", model: "openai/gpt-4o" },
       },
-      { status: 200 },
-    );
+      createdAgents: agentDefs,
+      taskQueue,
+      status: "RUNNING",
+    };
+
+    missionStore.saveSession(session);
+
+    // Emit session start
+    emitEvent(sessionId, "system", "STATUS", "Mission workspace created - AI agents are ready.", 0.95, "RUNNING");
+
+    // Start the agent pipeline in the background
+    (async () => {
+      try {
+        emitEvent(sessionId, "system", "STATUS", "Starting AI agent pipeline...", 0.95, "RUNNING");
+
+        // CEO creates strategic plan
+        emitEvent(sessionId, "ceo_agent", "THOUGHT", "CEO is analyzing the objective and creating a strategic plan...", 0.9, "RUNNING");
+        
+        const ceoPlan = await agents.ceo_agent.generate({
+          prompt: `Create a strategic plan for: "${objective}"
+          
+          Include:
+          1. Mission Objective - What exactly we're trying to achieve
+          2. Departments to Activate - Which teams and why
+          3. KPIs - Measurable success criteria
+          4. Priority Assignments - P0/P1/P2 with reasoning
+          5. Risk Assessment - Potential issues and mitigations
+          
+          Be specific and detailed. Show your reasoning.`,
+        });
+        
+        emitEvent(sessionId, "ceo_agent", "THOUGHT", ceoPlan.text.slice(0, 1000), 0.92, "RUNNING");
+        
+        // Store as artifact
+        missionStore.appendArtifact({
+          artifactId: id("art"),
+          sessionId,
+          createdAtUtc: nowIso(),
+          category: "plan",
+          title: "Strategic Plan",
+          payload: { content: ceoPlan.text },
+        });
+
+        // COO breaks down into tasks
+        emitEvent(sessionId, "coo_agent", "ACTION", "COO is breaking down the plan into actionable tasks...", 0.9, "RUNNING");
+        
+        const cooTasks = await agents.coo_agent.generate({
+          prompt: `Based on the CEO's plan:
+          
+          ${ceoPlan.text}
+          
+          Break this into specific, concrete tasks. For each task include:
+          - Task title
+          - What to do (detailed steps)
+          - Assigned department
+          - Priority (P0/P1/P2)
+          - Time estimate
+          
+          Be specific, no placeholders.`,
+        });
+        
+        emitEvent(sessionId, "coo_agent", "ACTION", cooTasks.text.slice(0, 1000), 0.9, "RUNNING");
+
+        // Update task queue
+        missionStore.updateQueueStatus(sessionId, taskQueue[2].queueId, "COMPLETED");
+        missionStore.updateQueueStatus(sessionId, taskQueue[3].queueId, "COMPLETED");
+        missionStore.updateQueueStatus(sessionId, taskQueue[4].queueId, "RUNNING");
+
+        // Worker starts first task
+        emitEvent(sessionId, "worker_agent", "ACTION", "Worker is starting the first priority task...", 0.85, "RUNNING");
+        
+        const workerResult = await agents.worker_agent.generate({
+          prompt: `Based on the COO's task breakdown:
+          
+          ${cooTasks.text}
+          
+          Pick the highest-priority task and start working on it.
+          
+          If code is needed, write actual code in markdown blocks.
+          If it's analysis/planning, produce the actual deliverable.
+          
+          Show:
+          1. Which task you're working on
+          2. Your approach
+          3. The actual output
+          4. Status and next steps`,
+        });
+        
+        emitEvent(sessionId, "worker_agent", "ACTION", workerResult.text.slice(0, 1000), 0.88, "RUNNING");
+        
+        // Store worker output as artifact
+        missionStore.appendArtifact({
+          artifactId: id("art"),
+          sessionId,
+          createdAtUtc: nowIso(),
+          category: "deliverable",
+          title: "Initial Deliverable",
+          payload: { content: workerResult.text },
+        });
+
+        emitEvent(sessionId, "system", "STATUS", "Initial agent pipeline complete. Use the chat for further instructions.", 0.95, "COMPLETED");
+
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        emitEvent(sessionId, "system", "STATUS", `Agent pipeline error: ${msg}`, 0.5, "BLOCKED");
+      }
+    })();
+
+    return NextResponse.json({
+      sessionId,
+      objective,
+      status: "launching",
+      agents: agentDefs.length,
+      streaming: {
+        websocket: `/ws/session/${sessionId}`,
+        sseFallback: `/api/mission-control/events/${sessionId}`,
+      },
+      workspace: `/workspace/${sessionId}`,
+    });
   } catch (error) {
     return NextResponse.json(
       {
