@@ -85,6 +85,9 @@ export default function WorkspacePage() {
     inputRef.current?.focus();
   }, []);
 
+  /* ---- Demo mode state ---- */
+  const [isDemoMode, setIsDemoMode] = useState(false);
+
   /* ---- Fetch available models from all providers on mount ---- */
   useEffect(() => {
     fetch("/api/mission-control/health")
@@ -97,7 +100,7 @@ export default function WorkspacePage() {
           .map((m: { model: string; name: string; provider: string }) => ({
             provider: m.provider,
             model: m.model,
-            label: `${m.name} (${m.provider})`,
+            label: m.provider === "demo" ? "Demo Mode (Simulated)" : `${m.name} (${m.provider})`,
           }));
         
         // If no models available, show all as options anyway
@@ -112,7 +115,16 @@ export default function WorkspacePage() {
           setAvailableModels(models);
         }
         
-        setSelectedModel(models[0]?.model ?? modelChecks[0]?.model ?? "");
+        const firstModel = models[0]?.model ?? modelChecks[0]?.model ?? "";
+        setSelectedModel(firstModel);
+        
+        // Check if we're in demo mode
+        const onlyDemoAvailable = models.length === 1 && models[0]?.provider === "demo";
+        setIsDemoMode(onlyDemoAvailable);
+        
+        if (onlyDemoAvailable) {
+          setTimeline((prev) => [...prev, "Demo Mode Active: Showing simulated AI responses. Configure an AI provider in settings for real AI."]);
+        }
         
         // Show recommendations in timeline
         const recommendations = data?.recommendations ?? [];
@@ -237,12 +249,13 @@ export default function WorkspacePage() {
               setCurrentProgress(null);
               const agentLabel = data.agentName ?? data.agent ?? "Agent";
               const deptLabel = data.department ? ` (${data.department})` : "";
+              const demoIndicator = data.model === "demo-mode" ? " [Demo]" : "";
               setChatMessages((prev) => [
                 ...prev,
                 {
                   id: `msg_${Date.now()}_${data.step}`,
                   role: "agent" as const,
-                  agent: `${agentLabel}${deptLabel}`,
+                  agent: `${agentLabel}${deptLabel}${demoIndicator}`,
                   text: data.message ?? "",
                   timestamp: data.timestamp ?? new Date().toISOString(),
                 },
@@ -478,6 +491,9 @@ export default function WorkspacePage() {
           <span className={styles.noProvider}>No LLM provider — start Ollama locally or set GEMINI_API_KEY</span>
         )}
         <small className={styles.connBadge}>{connectionLabel}</small>
+        {isDemoMode && (
+          <small className={styles.demoBadge}>Demo Mode - Simulated AI Responses</small>
+        )}
       </header>
 
       <section className={styles.panes}>

@@ -54,6 +54,21 @@
   color: var(--accent-cyan, #0ff);
 }
 
+.demoBadge {
+  font-size: 0.7rem;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.15);
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+.noProvider {
+  font-size: 0.72rem;
+  color: #f87171;
+  margin-left: auto;
+}
+
 .panes {
   display: grid;
   grid-template-columns: 260px 1fr 280px;

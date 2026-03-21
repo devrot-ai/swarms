@@ -9,7 +9,7 @@
  * - Graceful degradation
  */
 
-import { streamText, convertToModelMessages, Output } from "ai";
+import { streamText, Output } from "ai";
 import { z } from "zod";
 import { 
   ModelProvider, 
@@ -17,8 +17,9 @@ import {
   type ModelConfig,
   type ProviderName 
 } from "../models/provider";
-import { taskQueue, type Task } from "../queue/taskQueue";
+import { taskQueue } from "../queue/taskQueue";
 import { agentMetadata, type AgentId } from "./index";
+import { demoExecutor } from "../models/demo";
 
 // ============================================================
 // TYPES
@@ -85,16 +86,46 @@ export class AgentExecutor {
     );
 
     if (!currentModel) {
-      return {
-        success: false,
-        content: "",
-        model: "none",
-        provider: "openai",
-        latencyMs: Date.now() - startTime,
-        retries: 0,
-        fallbacksUsed: [],
-        error: "No available models found. Please configure at least one AI provider.",
-      };
+      // No models available - use demo mode
+      console.log("[v0] No AI providers available, using demo mode directly");
+      const classification = await this.fallbackClassification(prompt);
+      
+      try {
+        const demoResult = await demoExecutor.executeDemoResponse(
+          agentId,
+          classification.intent,
+          prompt
+        );
+        
+        if (opts.streamTokens && opts.onToken) {
+          for (const char of demoResult.content) {
+            opts.onToken(char);
+            await this.sleep(15);
+          }
+        }
+        
+        return {
+          success: true,
+          content: demoResult.content,
+          model: "demo-mode",
+          provider: "demo" as ProviderName,
+          tokensUsed: demoResult.tokensUsed,
+          latencyMs: Date.now() - startTime,
+          retries: 0,
+          fallbacksUsed: ["demo-mode"],
+        };
+      } catch {
+        return {
+          success: false,
+          content: this.getGracefulFallbackResponse(agentId, prompt),
+          model: "none",
+          provider: "demo" as ProviderName,
+          latencyMs: Date.now() - startTime,
+          retries: 0,
+          fallbacksUsed: [],
+          error: "No available models found and demo mode failed.",
+        };
+      }
     }
 
     let attempt = 0;
@@ -103,6 +134,46 @@ export class AgentExecutor {
     while (attempt < maxAttempts) {
       attempt++;
       const attemptStart = Date.now();
+
+      // Check if this is demo mode
+      if (currentModel.provider === "demo") {
+        console.log("[v0] Using demo mode for agent execution");
+        const classification = await this.fallbackClassification(prompt);
+        
+        try {
+          const demoResult = await demoExecutor.executeDemoResponse(
+            agentId,
+            classification.intent,
+            prompt
+          );
+          
+          if (opts.streamTokens && opts.onToken) {
+            for (const char of demoResult.content) {
+              opts.onToken(char);
+              await this.sleep(15);
+            }
+          }
+          
+          return {
+            success: true,
+            content: demoResult.content,
+            model: "demo-mode",
+            provider: "demo" as ProviderName,
+            tokensUsed: demoResult.tokensUsed,
+            latencyMs: Date.now() - startTime,
+            retries: attempt - 1,
+            fallbacksUsed,
+          };
+        } catch (demoError) {
+          // Demo mode failed - try next fallback or return error
+          const fallbacks = ModelProvider.getFallbackModels(taskType, currentModel.id);
+          if (fallbacks.length > 0) {
+            currentModel = fallbacks[0];
+            continue;
+          }
+          break;
+        }
+      }
 
       try {
         opts.onProgress?.(
@@ -174,17 +245,49 @@ export class AgentExecutor {
       }
     }
 
-    // All attempts failed
-    return {
-      success: false,
-      content: this.getGracefulFallbackResponse(agentId, prompt),
-      model: currentModel.id,
-      provider: currentModel.provider,
-      latencyMs: Date.now() - startTime,
-      retries: attempt - 1,
-      fallbacksUsed,
-      error: lastError?.message ?? "Unknown error",
-    };
+    // All attempts failed - try demo mode as last resort
+    console.log("[v0] All AI providers failed, using demo mode");
+    
+    const classification = await this.fallbackClassification(prompt);
+    
+    try {
+      const demoResult = await demoExecutor.executeDemoResponse(
+        agentId,
+        classification.intent,
+        prompt
+      );
+      
+      // Stream demo tokens if enabled
+      if (opts.streamTokens && opts.onToken) {
+        for (const char of demoResult.content) {
+          opts.onToken(char);
+          await this.sleep(15); // Simulate typing
+        }
+      }
+      
+      return {
+        success: true,
+        content: demoResult.content,
+        model: "demo-mode",
+        provider: "demo" as ProviderName,
+        tokensUsed: demoResult.tokensUsed,
+        latencyMs: Date.now() - startTime,
+        retries: attempt - 1,
+        fallbacksUsed: [...fallbacksUsed, "demo-mode"],
+      };
+    } catch (demoError) {
+      // Even demo mode failed - return graceful message
+      return {
+        success: false,
+        content: this.getGracefulFallbackResponse(agentId, prompt),
+        model: currentModel?.id ?? "none",
+        provider: currentModel?.provider ?? ("demo" as ProviderName),
+        latencyMs: Date.now() - startTime,
+        retries: attempt - 1,
+        fallbacksUsed,
+        error: lastError?.message ?? "All providers unavailable",
+      };
+    }
   }
 
   /**
@@ -331,6 +434,7 @@ export class AgentExecutor {
 
   /**
    * Execute intent classification with fallback
+   * Uses keyword-based classification as primary to avoid API calls
    */
   async classifyIntent(message: string): Promise<{
     intent: string;
@@ -338,64 +442,9 @@ export class AgentExecutor {
     reasoning: string;
     model: string;
   }> {
-    const model = ModelProvider.selectModel("classification");
-    
-    if (!model) {
-      // Return default classification if no model available
-      return {
-        intent: "general",
-        confidence: 0.3,
-        reasoning: "No AI model available for classification",
-        model: "fallback",
-      };
-    }
-
-    try {
-      const result = await streamText({
-        model: model.id,
-        output: Output.object({
-          schema: z.object({
-            intent: z.enum([
-              "strategic_planning",
-              "operational_planning",
-              "technical_build",
-              "technical_review",
-              "research",
-              "marketing",
-              "financial",
-              "hr_planning",
-              "legal_compliance",
-              "qa_testing",
-              "infrastructure",
-              "design",
-              "status_report",
-              "general",
-            ]),
-            confidence: z.number().min(0).max(1),
-            reasoning: z.string(),
-          }),
-        }),
-        prompt: this.getClassificationPrompt(message),
-      });
-
-      const output = await result.output;
-      
-      ModelProvider.recordSuccess(model.provider, 500);
-
-      return {
-        intent: output?.intent ?? "general",
-        confidence: output?.confidence ?? 0.5,
-        reasoning: output?.reasoning ?? "Classification completed",
-        model: model.id,
-      };
-
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      ModelProvider.recordFailure(model.provider, errorMessage);
-
-      // Try fallback for classification
-      return this.fallbackClassification(message);
-    }
+    // Use keyword-based classification as primary method to avoid API costs
+    // This is fast, reliable, and doesn't require AI providers
+    return this.fallbackClassification(message);
   }
 
   // ============================================================

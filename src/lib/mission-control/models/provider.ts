@@ -25,7 +25,8 @@ export type ProviderName =
   | "google"
   | "groq"
   | "ollama"
-  | "deepinfra";
+  | "deepinfra"
+  | "demo";
 
 export interface ModelConfig {
   id: string;                     // e.g., "openai/gpt-4o"
@@ -147,6 +148,18 @@ export const modelRegistry: ModelConfig[] = [
     isLocal: true,
     baseUrl: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
   },
+  // Demo Mode - Always available fallback
+  {
+    id: "demo/simulated",
+    provider: "demo",
+    name: "Demo Mode (Simulated)",
+    capabilities: ["classification", "strategic", "technical", "creative", "analysis", "code_generation", "code_review", "general"],
+    maxTokens: 4096,
+    costPer1kTokens: 0,
+    priority: 100, // Lowest priority - only used when everything else fails
+    requiresApiKey: false,
+    isLocal: true,
+  },
 ];
 
 // ============================================================
@@ -156,7 +169,7 @@ export const modelRegistry: ModelConfig[] = [
 const providerHealthMap = new Map<ProviderName, ProviderHealth>();
 
 // Initialize health tracking
-for (const provider of ["openai", "anthropic", "google", "groq", "ollama", "deepinfra"] as ProviderName[]) {
+for (const provider of ["openai", "anthropic", "google", "groq", "ollama", "deepinfra", "demo"] as ProviderName[]) {
   providerHealthMap.set(provider, {
     provider,
     isHealthy: true,
@@ -264,6 +277,12 @@ export function selectModel(taskType: TaskType, preferredProvider?: ProviderName
     if (anyCapable.length > 0) {
       return anyCapable.sort((a, b) => a.priority - b.priority)[0];
     }
+    // Return demo model as last resort
+    const demoModel = modelRegistry.find(m => m.provider === "demo");
+    if (demoModel) {
+      console.log(`[v0] Using demo mode as fallback`);
+      return demoModel;
+    }
     return null;
   }
   
@@ -345,6 +364,11 @@ export async function checkModelAvailability(modelId: string): Promise<{ availab
   
   if (!config) {
     return { available: false, reason: "Model not found in registry" };
+  }
+  
+  // Demo mode is always available
+  if (config.provider === "demo") {
+    return { available: true, reason: "Demo mode - simulated responses" };
   }
   
   if (config.requiresApiKey && !isApiKeyAvailable(config)) {

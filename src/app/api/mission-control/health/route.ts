@@ -133,7 +133,12 @@ function getRecommendations(
 ): string[] {
   const recommendations: string[] = [];
 
-  if (status === "unhealthy") {
+  // Check if demo mode is available
+  const demoAvailable = models.find(m => m.model.includes("demo") && m.available);
+  
+  if (status === "unhealthy" && demoAvailable) {
+    recommendations.push("Demo mode is active - showing simulated AI responses. Configure an AI provider for real AI capabilities.");
+  } else if (status === "unhealthy") {
     recommendations.push("System needs configuration. Please set up at least one AI provider.");
   }
 
@@ -186,12 +191,12 @@ export async function POST(req: Request) {
     const body = await req.json() as { action: string; provider?: string };
     
     if (body.action === "reset_health" && body.provider) {
-      ModelProvider.resetHealth(body.provider as "openai" | "anthropic" | "google" | "groq" | "ollama" | "deepinfra");
+      ModelProvider.resetHealth(body.provider as "openai" | "anthropic" | "google" | "groq" | "ollama" | "deepinfra" | "demo");
       return NextResponse.json({ success: true, message: `Reset health for ${body.provider}` });
     }
     
     if (body.action === "reset_all") {
-      for (const provider of ["openai", "anthropic", "google", "groq", "ollama", "deepinfra"] as const) {
+      for (const provider of ["openai", "anthropic", "google", "groq", "ollama", "deepinfra", "demo"] as const) {
         ModelProvider.resetHealth(provider);
       }
       return NextResponse.json({ success: true, message: "Reset all provider health" });
