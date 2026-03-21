@@ -34,7 +34,11 @@ export default function Hero() {
             const res = await fetch("/api/mission-control/launch", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ uid, modelMode: "default" }),
+                body: JSON.stringify({ 
+                    uid, 
+                    template: "CEO",
+                    objective: "Launch the AI agent company and demonstrate multi-agent collaboration"
+                }),
             });
             const data = await res.json();
             if (!res.ok) {
@@ -98,9 +102,8 @@ export default function Hero() {
                 </h1>
 
                 <p className={styles.subtitle}>
-                    Six AI agents — Minion, Sage, Scout, Quill, Xalt &amp; Observer —
-                    propose, execute, and self-heal in a fully closed loop.
-                    Powered by Ollama, Vercel &amp; Supabase.
+                    Twelve AI agents — CEO, COO, CTO, CFO, Marketing, HR, Legal, QA, DevOps, Design, Research &amp; Workers —
+                    collaborate to plan, build, test, and deploy. A fully autonomous AI company.
                 </p>
 
                 {error && <p className={styles.errorBanner}>{error}</p>}
@@ -138,18 +141,18 @@ export default function Hero() {
 
                 <div className={styles.stats}>
                     <div className={styles.stat}>
-                        <span className={styles.statNumber}>6</span>
-                        <span className={styles.statLabel}>Specialized Agents</span>
+                        <span className={styles.statNumber}>12</span>
+                        <span className={styles.statLabel}>Department Agents</span>
                     </div>
                     <div className={styles.statDivider} />
                     <div className={styles.stat}>
-                        <span className={styles.statNumber}>24/7</span>
-                        <span className={styles.statLabel}>Closed-Loop</span>
+                        <span className={styles.statNumber}>20+</span>
+                        <span className={styles.statLabel}>Business Tools</span>
                     </div>
                     <div className={styles.statDivider} />
                     <div className={styles.stat}>
-                        <span className={styles.statNumber}>∞</span>
-                        <span className={styles.statLabel}>Self-Healing</span>
+                        <span className={styles.statNumber}>AI</span>
+                        <span className={styles.statLabel}>Powered Company</span>
                     </div>
                 </div>
             </div>

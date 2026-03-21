@@ -158,6 +158,8 @@ export default function WorkspacePage() {
             const data = JSON.parse(line.slice(6)) as {
               type: string;
               agent?: string;
+              agentName?: string;
+              department?: string;
               label?: string;
               step?: number;
               totalSteps?: number;
@@ -168,17 +170,25 @@ export default function WorkspacePage() {
               provider?: string;
               tokensUsed?: number;
               token?: string;
+              toolCalls?: Array<{ tool: string; result: unknown }>;
+              intent?: string;
+              confidence?: number;
             };
 
-            if (data.type === "progress") {
+            if (data.type === "classification") {
+              // Intent classification result - show in timeline
+              setTimeline((prev) => [...prev, `Intent: ${data.intent} (${Math.round((data.confidence ?? 0) * 100)}% confidence)`]);
+            } else if (data.type === "progress") {
               // New agent step starting — reset streaming text
               setStreamingText("");
               setCurrentProgress({
-                agent: data.agent ?? "agent",
+                agent: data.agentName ?? data.agent ?? "Agent",
                 label: data.label ?? "Thinking…",
                 step: data.step ?? 1,
                 totalSteps: data.totalSteps ?? 1,
               });
+              // Add to timeline
+              setTimeline((prev) => [...prev, `${data.agentName ?? data.agent} (${data.department ?? 'Department'}) is working...`]);
             } else if (data.type === "token") {
               // Live token from agent — append to streaming display
               setStreamingText((prev) => prev + (data.token ?? ""));
@@ -186,16 +196,25 @@ export default function WorkspacePage() {
               // Agent finished — clear streaming, add final message
               setStreamingText("");
               setCurrentProgress(null);
+              const agentLabel = data.agentName ?? data.agent ?? "Agent";
+              const deptLabel = data.department ? ` (${data.department})` : "";
               setChatMessages((prev) => [
                 ...prev,
                 {
                   id: `msg_${Date.now()}_${data.step}`,
                   role: "agent" as const,
-                  agent: data.agent,
+                  agent: `${agentLabel}${deptLabel}`,
                   text: data.message ?? "",
                   timestamp: data.timestamp ?? new Date().toISOString(),
                 },
               ]);
+              // Log tool calls if any
+              if (data.toolCalls && data.toolCalls.length > 0) {
+                setTimeline((prev) => [
+                  ...prev,
+                  `${agentLabel} used tools: ${data.toolCalls!.map(t => t.tool).join(", ")}`,
+                ]);
+              }
             } else if (data.type === "error") {
               setCurrentProgress(null);
               setChatMessages((prev) => [
@@ -446,9 +465,11 @@ export default function WorkspacePage() {
                 <div className={styles.suggestions}>
                   {[
                     "Plan a go-to-market strategy for our AI product",
-                    "Research the latest trends in autonomous agents",
-                    "Build a landing page with dark theme",
-                    "What is the current mission status?",
+                    "Build a REST API for user authentication",
+                    "Research competitors in the AI agent space",
+                    "Create a marketing campaign for product launch",
+                    "Review the codebase for security vulnerabilities",
+                    "Analyze our budget and ROI projections",
                   ].map((s) => (
                     <button
                       key={s}
