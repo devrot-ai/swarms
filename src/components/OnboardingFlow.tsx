@@ -1,12 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import styles from "./OnboardingFlow.module.css";
 
-type Provider = "google" | "openai" | "anthropic" | "ollama" | "custom";
+type Provider = "google" | "openai" | "anthropic" | "ollama" | "custom" | "demo";
 type Template = "CEO" | "Marketing" | "Engineering" | "Design" | "Quick Task";
+
+interface AvailableModel {
+  provider: string;
+  model: string;
+  label: string;
+  description?: string;
+  isFree?: boolean;
+}
 
 const templates: Array<{
   name: Template;
@@ -52,7 +60,7 @@ export default function OnboardingFlow() {
   const router = useRouter();
   const [mode, setMode] = useState<"welcome" | "apikey" | "agents">("welcome");
   const [modelMode, setModelMode] = useState<"default" | "apikey">("default");
-  const [provider, setProvider] = useState<Provider>("ollama");
+  const [provider, setProvider] = useState<Provider>("demo");
   const [apiKey, setApiKey] = useState("");
   const [message, setMessage] = useState("");
   const [template, setTemplate] = useState<Template>("Quick Task");
@@ -64,8 +72,27 @@ export default function OnboardingFlow() {
     "Quick Task": false,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
 
   const apiKeyValid = useMemo(() => isValidByProvider(provider, apiKey), [provider, apiKey]);
+
+  // Fetch available models on mount
+  useEffect(() => {
+    fetch("/api/mission-control/health")
+      .then((r) => r.json())
+      .then((data) => {
+        const models: AvailableModel[] = data?.models ?? [];
+        setAvailableModels(models);
+        // Default to first free model
+        const defaultModel = models.find(m => m.isFree)?.model ?? models[0]?.model ?? "";
+        setSelectedModel(defaultModel);
+      })
+      .catch(() => {/* health endpoint unreachable */});
+  }, []);
+
+  const freeModels = availableModels.filter(m => m.isFree);
+  const ollamaModels = availableModels.filter(m => m.provider === "ollama");
 
   const handleDefault = () => {
     setModelMode("default");

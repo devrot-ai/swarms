@@ -1,12 +1,12 @@
 /* ------------------------------------------------------------------ */
 /*  Multi-provider LLM module                                         */
-/*  Supports: Ollama (local), Google Gemini, OpenAI                   */
-/*  Falls back automatically: Ollama → Gemini → OpenAI                */
+/*  Supports: Ollama (local), Google Gemini, OpenAI, Demo (free)      */
+/*  Falls back automatically: Demo → Ollama → Gemini → OpenAI         */
 /* ------------------------------------------------------------------ */
 
 const OLLAMA_BASE = process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434";
 
-export type LLMProvider = "ollama" | "google" | "openai";
+export type LLMProvider = "ollama" | "google" | "openai" | "demo";
 
 export interface AgentChatResult {
   content: string;
@@ -19,7 +19,35 @@ export interface ProviderModel {
   provider: LLMProvider;
   model: string;
   label: string;
+  description?: string;
+  isFree?: boolean;
 }
+
+/* ---------- Free Demo Models via Vercel AI Gateway ---------- */
+/* These models are available without any API key configuration */
+const DEMO_MODELS: ProviderModel[] = [
+  {
+    provider: "demo",
+    model: "openai/gpt-4o-mini",
+    label: "GPT-4o Mini (Free Demo)",
+    description: "Fast, capable model for everyday tasks",
+    isFree: true,
+  },
+  {
+    provider: "demo",
+    model: "anthropic/claude-3-5-haiku-20241022",
+    label: "Claude 3.5 Haiku (Free Demo)",
+    description: "Quick responses, great for chat",
+    isFree: true,
+  },
+  {
+    provider: "demo",
+    model: "google/gemini-2.0-flash",
+    label: "Gemini 2.0 Flash (Free Demo)",
+    description: "Google's fast multimodal model",
+    isFree: true,
+  },
+];
 
 /* ---------- Provider availability checks ---------- */
 
@@ -48,7 +76,10 @@ export function isGeminiConfigured(): boolean {
 export async function listAvailableModels(): Promise<ProviderModel[]> {
   const models: ProviderModel[] = [];
 
-  // Ollama (local) listed first as primary provider
+  // Always include free demo models first so users can try without setup
+  models.push(...DEMO_MODELS);
+
+  // Ollama (local) models if reachable
   if (await isOllamaReachable()) {
     try {
       const res = await fetch(`${OLLAMA_BASE}/api/tags`, { signal: AbortSignal.timeout(3000) });
@@ -56,7 +87,12 @@ export async function listAvailableModels(): Promise<ProviderModel[]> {
         const data = await res.json();
         const ollamaModels: { name: string }[] = data?.models ?? [];
         for (const m of ollamaModels) {
-          models.push({ provider: "ollama", model: m.name, label: `${m.name} (Ollama)` });
+          models.push({ 
+            provider: "ollama", 
+            model: m.name, 
+            label: `${m.name} (Ollama Local)`,
+            description: "Running on your local machine",
+          });
         }
       }
     } catch { /* Ollama unavailable */ }
@@ -64,17 +100,17 @@ export async function listAvailableModels(): Promise<ProviderModel[]> {
 
   if (isGeminiConfigured()) {
     models.push(
-      { provider: "google", model: "gemini-2.0-flash", label: "Gemini 2.0 Flash (Google)" },
-      { provider: "google", model: "gemini-2.5-flash-preview-05-20", label: "Gemini 2.5 Flash (Google)" },
+      { provider: "google", model: "gemini-2.0-flash", label: "Gemini 2.0 Flash (Your Key)", description: "Your API key" },
+      { provider: "google", model: "gemini-2.5-flash-preview-05-20", label: "Gemini 2.5 Flash (Your Key)", description: "Your API key" },
     );
   }
 
   if (isOpenAIConfigured()) {
     models.push(
-      { provider: "openai", model: "gpt-4o-mini", label: "GPT-4o Mini (OpenAI)" },
-      { provider: "openai", model: "gpt-4o", label: "GPT-4o (OpenAI)" },
-      { provider: "openai", model: "gpt-4.1-nano", label: "GPT-4.1 Nano (OpenAI)" },
-      { provider: "openai", model: "gpt-4.1-mini", label: "GPT-4.1 Mini (OpenAI)" },
+      { provider: "openai", model: "gpt-4o-mini", label: "GPT-4o Mini (Your Key)", description: "Your API key" },
+      { provider: "openai", model: "gpt-4o", label: "GPT-4o (Your Key)", description: "Your API key" },
+      { provider: "openai", model: "gpt-4.1-nano", label: "GPT-4.1 Nano (Your Key)", description: "Your API key" },
+      { provider: "openai", model: "gpt-4.1-mini", label: "GPT-4.1 Mini (Your Key)", description: "Your API key" },
     );
   }
 
@@ -84,6 +120,8 @@ export async function listAvailableModels(): Promise<ProviderModel[]> {
 /* ---------- Detect provider from model string ---------- */
 
 function detectProvider(model: string): LLMProvider {
+  // Demo models use provider/model format (e.g., "openai/gpt-4o-mini")
+  if (model.includes("/")) return "demo";
   if (model.startsWith("gpt-")) return "openai";
   if (model.startsWith("gemini-")) return "google";
   return "ollama";
@@ -92,12 +130,8 @@ function detectProvider(model: string): LLMProvider {
 /* ---------- Pick a default model from what's available ---------- */
 
 async function pickDefault(): Promise<{ provider: LLMProvider; model: string }> {
-  if (await isOllamaReachable()) return { provider: "ollama", model: process.env.OLLAMA_MODEL ?? "llama3" };
-  if (isGeminiConfigured()) return { provider: "google", model: "gemini-2.0-flash" };
-  if (isOpenAIConfigured()) return { provider: "openai", model: "gpt-4o-mini" };
-  throw new Error(
-    "No LLM provider available. Start Ollama locally with `ollama serve`, or set GEMINI_API_KEY or OPENAI_API_KEY in your environment.",
-  );
+  // Always default to free demo models so users can try immediately
+  return { provider: "demo", model: "openai/gpt-4o-mini" };
 }
 
 /* ---------- Provider-specific chat calls ---------- */
@@ -340,6 +374,87 @@ async function chatOllamaStream(
   return { content, model, provider: "ollama", tokensUsed: 0 };
 }
 
+/* ---------- Demo models via Vercel AI Gateway (free, no API key needed) ---------- */
+
+async function chatDemo(
+  messages: { role: string; content: string }[],
+  model: string,
+): Promise<AgentChatResult> {
+  // Use the AI SDK's streamText under the hood with Vercel AI Gateway
+  const res = await fetch("https://api.vercel.ai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.7,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Demo model request failed (${res.status}): ${text}`);
+  }
+
+  const data = await res.json();
+  return {
+    content: data.choices?.[0]?.message?.content ?? "",
+    model,
+    provider: "demo",
+    tokensUsed: (data.usage?.prompt_tokens ?? 0) + (data.usage?.completion_tokens ?? 0),
+  };
+}
+
+async function chatDemoStream(
+  messages: { role: string; content: string }[],
+  model: string,
+  onToken: (token: string) => void,
+): Promise<AgentChatResult> {
+  const res = await fetch("https://api.vercel.ai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.7,
+      stream: true,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Demo model stream failed (${res.status}): ${text}`);
+  }
+
+  let content = "";
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop()!;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data: ") || trimmed === "data: [DONE]") continue;
+      try {
+        const json = JSON.parse(trimmed.slice(6));
+        const delta = json.choices?.[0]?.delta?.content;
+        if (delta) { content += delta; onToken(delta); }
+      } catch { /* skip */ }
+    }
+  }
+
+  return { content, model, provider: "demo", tokensUsed: 0 };
+}
+
 /* ---------- Build chat messages ---------- */
 
 function buildMessages(agentId: string, prompt: string, context?: string) {
@@ -366,6 +481,7 @@ export async function agentChat(
   if (model) {
     const provider = detectProvider(model);
     switch (provider) {
+      case "demo": return chatDemo(messages, model);
       case "openai": return chatOpenAI(messages, model);
       case "google": return chatGemini(messages, model);
       case "ollama": return chatOllama(messages, model);
@@ -374,6 +490,7 @@ export async function agentChat(
 
   const defaults = await pickDefault();
   switch (defaults.provider) {
+    case "demo": return chatDemo(messages, defaults.model);
     case "openai": return chatOpenAI(messages, defaults.model);
     case "google": return chatGemini(messages, defaults.model);
     case "ollama": return chatOllama(messages, defaults.model);
@@ -394,6 +511,7 @@ export async function agentChatStream(
   if (model) {
     const provider = detectProvider(model);
     switch (provider) {
+      case "demo": return chatDemoStream(messages, model, onToken);
       case "openai": return chatOpenAIStream(messages, model, onToken);
       case "google": return chatGeminiStream(messages, model, onToken);
       case "ollama": return chatOllamaStream(messages, model, onToken);
@@ -402,6 +520,7 @@ export async function agentChatStream(
 
   const defaults = await pickDefault();
   switch (defaults.provider) {
+    case "demo": return chatDemoStream(messages, defaults.model, onToken);
     case "openai": return chatOpenAIStream(messages, defaults.model, onToken);
     case "google": return chatGeminiStream(messages, defaults.model, onToken);
     case "ollama": return chatOllamaStream(messages, defaults.model, onToken);
@@ -411,8 +530,6 @@ export async function agentChatStream(
 /* ---------- Check if ANY provider is available ---------- */
 
 export async function isAnyProviderAvailable(): Promise<boolean> {
-  if (await isOllamaReachable()) return true;
-  if (isGeminiConfigured()) return true;
-  if (isOpenAIConfigured()) return true;
-  return false;
+  // Demo models are always available (Vercel AI Gateway)
+  return true;
 }

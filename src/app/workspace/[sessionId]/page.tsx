@@ -54,8 +54,9 @@ export default function WorkspacePage() {
   }, []);
 
   /* ---- Model selector state ---- */
-  const [availableModels, setAvailableModels] = useState<{provider: string; model: string; label: string}[]>([]);
+  const [availableModels, setAvailableModels] = useState<{provider: string; model: string; label: string; description?: string; isFree?: boolean}[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [showModelPicker, setShowModelPicker] = useState(false);
 
   /* ---- Progress tracking state ---- */
   const [currentProgress, setCurrentProgress] = useState<{
@@ -90,10 +91,12 @@ export default function WorkspacePage() {
     fetch("/api/mission-control/health")
       .then((r) => r.json())
       .then((data) => {
-        const models: {provider: string; model: string; label: string}[] = data?.models ?? [];
+        const models: {provider: string; model: string; label: string; description?: string; isFree?: boolean}[] = data?.models ?? [];
         setAvailableModels(models);
         const current: string = data?.selectedModel ?? "";
-        setSelectedModel(models.find(m => m.model === current)?.model ?? models[0]?.model ?? "");
+        // Default to the first free demo model
+        const defaultModel = models.find(m => m.isFree)?.model ?? models[0]?.model ?? "";
+        setSelectedModel(models.find(m => m.model === current)?.model ?? defaultModel);
       })
       .catch(() => {/* health endpoint unreachable */});
   }, []);
@@ -398,24 +401,149 @@ export default function WorkspacePage() {
     return parts.length > 0 ? parts : <span className={styles.chatTextContent}>{text}</span>;
   }
 
+  const selectedModelInfo = availableModels.find(m => m.model === selectedModel);
+  const freeModels = availableModels.filter(m => m.isFree);
+  const ollamaModels = availableModels.filter(m => m.provider === "ollama");
+  const apiKeyModels = availableModels.filter(m => !m.isFree && m.provider !== "ollama");
+
   return (
     <main className={styles.page}>
       <header className={styles.header}>
         <h2>Workspace Session</h2>
         <span className={styles.sessionId}>{sessionId}</span>
-        {availableModels.length > 0 ? (
-          <select
-            className={styles.modelSelect}
-            value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value)}
-          >
-            {availableModels.map((m) => (
-              <option key={m.model} value={m.model}>{m.label}</option>
-            ))}
-          </select>
-        ) : (
-          <span className={styles.noProvider}>No LLM provider — start Ollama locally or set GEMINI_API_KEY</span>
+        
+        {/* Model Picker Button */}
+        <button 
+          className={styles.modelPickerBtn}
+          onClick={() => setShowModelPicker(!showModelPicker)}
+        >
+          <span className={styles.modelPickerIcon}>
+            {selectedModelInfo?.isFree && (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
+              </svg>
+            )}
+          </span>
+          <span className={styles.modelName}>{selectedModelInfo?.label ?? "Select Model"}</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M6 9l6 6 6-6"/>
+          </svg>
+        </button>
+
+        {/* Model Picker Dropdown */}
+        {showModelPicker && (
+          <div className={styles.modelPicker}>
+            <div className={styles.modelPickerHeader}>
+              <h4>Select AI Model</h4>
+              <button onClick={() => setShowModelPicker(false)} className={styles.closeBtn}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+
+            {/* Free Demo Models */}
+            {freeModels.length > 0 && (
+              <div className={styles.modelGroup}>
+                <div className={styles.modelGroupHeader}>
+                  <span className={styles.freeTag}>FREE</span>
+                  <span>Demo Models (No Setup Required)</span>
+                </div>
+                {freeModels.map((m) => (
+                  <button
+                    key={m.model}
+                    className={`${styles.modelOption} ${selectedModel === m.model ? styles.modelOptionActive : ""}`}
+                    onClick={() => {
+                      setSelectedModel(m.model);
+                      setShowModelPicker(false);
+                    }}
+                  >
+                    <div className={styles.modelOptionMain}>
+                      <span className={styles.modelOptionName}>{m.label}</span>
+                      {m.description && <span className={styles.modelOptionDesc}>{m.description}</span>}
+                    </div>
+                    {selectedModel === m.model && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M20 6L9 17l-5-5"/>
+                      </svg>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Ollama Models */}
+            {ollamaModels.length > 0 && (
+              <div className={styles.modelGroup}>
+                <div className={styles.modelGroupHeader}>
+                  <span className={styles.localTag}>LOCAL</span>
+                  <span>Ollama Models (Your Machine)</span>
+                </div>
+                {ollamaModels.map((m) => (
+                  <button
+                    key={m.model}
+                    className={`${styles.modelOption} ${selectedModel === m.model ? styles.modelOptionActive : ""}`}
+                    onClick={() => {
+                      setSelectedModel(m.model);
+                      setShowModelPicker(false);
+                    }}
+                  >
+                    <div className={styles.modelOptionMain}>
+                      <span className={styles.modelOptionName}>{m.label}</span>
+                      {m.description && <span className={styles.modelOptionDesc}>{m.description}</span>}
+                    </div>
+                    {selectedModel === m.model && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M20 6L9 17l-5-5"/>
+                      </svg>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* API Key Models */}
+            {apiKeyModels.length > 0 && (
+              <div className={styles.modelGroup}>
+                <div className={styles.modelGroupHeader}>
+                  <span className={styles.apiTag}>API</span>
+                  <span>Your API Keys</span>
+                </div>
+                {apiKeyModels.map((m) => (
+                  <button
+                    key={m.model}
+                    className={`${styles.modelOption} ${selectedModel === m.model ? styles.modelOptionActive : ""}`}
+                    onClick={() => {
+                      setSelectedModel(m.model);
+                      setShowModelPicker(false);
+                    }}
+                  >
+                    <div className={styles.modelOptionMain}>
+                      <span className={styles.modelOptionName}>{m.label}</span>
+                      {m.description && <span className={styles.modelOptionDesc}>{m.description}</span>}
+                    </div>
+                    {selectedModel === m.model && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M20 6L9 17l-5-5"/>
+                      </svg>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Add API Key / Connect Ollama */}
+            <div className={styles.modelPickerFooter}>
+              <a href="/" className={styles.modelFooterLink}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 5v14M5 12h14"/>
+                </svg>
+                Add API Key or Connect Ollama
+              </a>
+            </div>
+          </div>
         )}
+
         <small className={styles.connBadge}>{connectionLabel}</small>
       </header>
 
