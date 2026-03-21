@@ -88,6 +88,15 @@ export default function WorkspacePage() {
   /* ---- Demo mode state ---- */
   const [isDemoMode, setIsDemoMode] = useState(false);
 
+  /* ---- Response mode state ---- */
+  type ResponseMode = "detailed" | "balanced" | "concise";
+  const [responseMode, setResponseMode] = useState<ResponseMode>("balanced");
+  const responseModeOptions = [
+    { id: "detailed" as ResponseMode, label: "Detailed", desc: "Step-by-step with reasoning" },
+    { id: "balanced" as ResponseMode, label: "Balanced", desc: "Clear answer with key points" },
+    { id: "concise" as ResponseMode, label: "Concise", desc: "Direct, minimal explanation" },
+  ];
+
   /* ---- Fetch available models from all providers on mount ---- */
   useEffect(() => {
     fetch("/api/mission-control/health")
@@ -156,7 +165,12 @@ export default function WorkspacePage() {
       const resp = await fetch("/api/mission-control/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, message: text, model: selectedModel || undefined }),
+        body: JSON.stringify({ 
+          sessionId, 
+          message: text, 
+          model: selectedModel || undefined,
+          responseMode: responseMode,
+        }),
       });
 
       if (!resp.ok) {
@@ -217,6 +231,8 @@ export default function WorkspacePage() {
               fallbacksUsed?: string[];
               recoverable?: boolean;
               suggestion?: string;
+              responseMode?: string;
+              responseModeLabel?: string;
             };
 
             if (data.type === "classification") {
@@ -305,7 +321,7 @@ export default function WorkspacePage() {
       setCurrentProgress(null);
       inputRef.current?.focus();
     }
-  }, [chatInput, sending, sessionId, selectedModel]);
+  }, [chatInput, sending, sessionId, selectedModel, responseMode]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -490,6 +506,24 @@ export default function WorkspacePage() {
         ) : (
           <span className={styles.noProvider}>No LLM provider — start Ollama locally or set GEMINI_API_KEY</span>
         )}
+        
+        {/* Response Mode Selector */}
+        <div className={styles.responseModeGroup}>
+          <span className={styles.responseModeLabel}>Response Style:</span>
+          <div className={styles.responseModeButtons}>
+            {responseModeOptions.map((mode) => (
+              <button
+                key={mode.id}
+                className={`${styles.responseModeBtn} ${responseMode === mode.id ? styles.responseModeActive : ""}`}
+                onClick={() => setResponseMode(mode.id)}
+                title={mode.desc}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        
         <small className={styles.connBadge}>{connectionLabel}</small>
         {isDemoMode && (
           <small className={styles.demoBadge}>Demo Mode - Simulated AI Responses</small>
@@ -520,6 +554,9 @@ export default function WorkspacePage() {
               <div className={styles.welcome}>
                 <h4>What would you like the swarm to do?</h4>
                 <p>Type a command below — plan a strategy, research a topic, assign tasks, or ask for a status update.</p>
+                <div className={styles.responseModeHint}>
+                  <strong>Response Mode:</strong> {responseModeOptions.find(m => m.id === responseMode)?.desc}
+                </div>
                 <div className={styles.suggestions}>
                   {[
                     "Plan a go-to-market strategy for our AI product",

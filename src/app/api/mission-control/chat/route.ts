@@ -14,12 +14,19 @@ import { agentMetadata, type AgentId } from "@/lib/mission-control/agents";
 import { missionStore } from "@/lib/mission-control/stores";
 import { missionEventBus } from "@/lib/mission-control/eventBus";
 import type { MissionEvent } from "@/lib/mission-control/types";
+import { 
+  type ResponseMode, 
+  getResponseModePrompt, 
+  responseModes,
+  getDemoResponseSuffix 
+} from "@/lib/mission-control/responseMode";
 
 interface ChatInput {
   sessionId: string;
   message: string;
   preferredModel?: string;
   preferredProvider?: string;
+  responseMode?: ResponseMode;
 }
 
 function nowIso() {
@@ -215,6 +222,8 @@ export async function POST(req: NextRequest) {
     }
 
     const { sessionId, message, preferredProvider } = body;
+    const responseMode: ResponseMode = body.responseMode ?? "balanced";
+    const modeConfig = responseModes[responseMode];
 
     // Emit user message
     emitMissionEvent(sessionId, "user", "THOUGHT", `User: ${message}`, 1.0, "RUNNING");
@@ -296,15 +305,20 @@ export async function POST(req: NextRequest) {
               agentPrompt = `CONTEXT:\n${context}\n\n${agentPrompt}`;
             }
 
+            // Add response mode instruction
+            const responseModeInstruction = getResponseModePrompt(responseMode);
+            const systemPrompt = getAgentSystemPrompt(agentId) + "\n\n" + responseModeInstruction;
+
             // Execute agent with fallback
             const result = await agentExecutor.execute(
               agentId,
               agentPrompt,
-              getAgentSystemPrompt(agentId),
+              systemPrompt,
               {},
               {
                 preferredProvider: preferredProvider as "openai" | "anthropic" | "google" | "groq" | undefined,
                 streamTokens: true,
+                responseMode: responseMode,
                 onToken: (token) => {
                   send({
                     type: "token",
@@ -353,6 +367,8 @@ export async function POST(req: NextRequest) {
               fallbacksUsed: result.fallbacksUsed,
               success: result.success,
               error: result.error,
+              responseMode: responseMode,
+              responseModeLabel: modeConfig.label,
             });
 
             // If this agent failed completely, we still continue to next agent

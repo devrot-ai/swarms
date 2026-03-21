@@ -69,6 +69,71 @@
   margin-left: auto;
 }
 
+/* ---- Response Mode Selector ---- */
+.responseModeGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+}
+
+.responseModeLabel {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.responseModeButtons {
+  display: flex;
+  gap: 4px;
+}
+
+.responseModeBtn {
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.responseModeBtn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.responseModeActive {
+  background: var(--accent-cyan, #0ff) !important;
+  color: #000 !important;
+  border-color: var(--accent-cyan, #0ff);
+}
+
+.responseModeActive:hover {
+  background: var(--accent-cyan, #0ff) !important;
+  opacity: 0.9;
+}
+
+/* Response mode hint in welcome section */
+.responseModeHint {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  margin-top: 8px;
+}
+
+.responseModeHint strong {
+  color: var(--accent-cyan, #0ff);
+}
+
 .panes {
   display: grid;
   grid-template-columns: 260px 1fr 280px;

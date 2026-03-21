@@ -438,7 +438,8 @@ export class DemoModeExecutor {
   async executeDemoResponse(
     agentId: AgentId,
     intent: string,
-    userMessage: string
+    userMessage: string,
+    responseMode: "detailed" | "concise" | "balanced" = "balanced"
   ): Promise<{
     content: string;
     model: string;
@@ -447,8 +448,17 @@ export class DemoModeExecutor {
   }> {
     const meta = agentMetadata[agentId];
     const response = this.getDemoResponse(intent);
+    let content = response.content;
+    
+    // Apply response mode formatting
+    if (responseMode === "detailed") {
+      content = this.formatDetailedResponse(content, response, meta.name, intent);
+    } else if (responseMode === "concise") {
+      content = this.formatConciseResponse(content);
+    }
+    
     const personalizedContent = this.personalizeResponse(
-      response.content,
+      content,
       userMessage,
       meta.name
     );
@@ -462,6 +472,75 @@ export class DemoModeExecutor {
       provider: "demo",
       tokensUsed: personalizedContent.length,
     };
+  }
+  
+  /**
+   * Format response for detailed mode with reasoning and alternatives
+   */
+  private formatDetailedResponse(
+    content: string,
+    response: DemoResponse,
+    agentName: string,
+    intent: string
+  ): string {
+    let detailed = content;
+    
+    // Add thinking steps if available
+    if (response.thinkingSteps.length > 0) {
+      detailed += `\n\n---\n\n## My Approach & Reasoning\n\n`;
+      detailed += `**Thought Process:**\n`;
+      response.thinkingSteps.forEach((step, i) => {
+        detailed += `${i + 1}. ${step}\n`;
+      });
+      detailed += `\n**Why this approach?** This methodology was chosen because it provides a systematic way to address the request while considering best practices and potential edge cases.`;
+    }
+    
+    // Add tools used
+    if (response.toolsUsed.length > 0) {
+      detailed += `\n\n## Tools & Resources Used\n\n`;
+      response.toolsUsed.forEach(tool => {
+        detailed += `- **${tool.replace(/_/g, ' ')}**: Applied to gather information and validate approach\n`;
+      });
+    }
+    
+    // Add alternative strategies
+    detailed += `\n\n## Alternative Strategies Considered\n\n`;
+    detailed += `**Alternative 1: Incremental Approach**\n`;
+    detailed += `- *Description*: Start with a minimal viable solution and iterate\n`;
+    detailed += `- *Pros*: Faster initial delivery, early feedback\n`;
+    detailed += `- *Cons*: May require significant refactoring later\n\n`;
+    
+    detailed += `**Alternative 2: Comprehensive Approach**\n`;
+    detailed += `- *Description*: Build a complete solution from the start\n`;
+    detailed += `- *Pros*: More robust, handles edge cases early\n`;
+    detailed += `- *Cons*: Longer initial development time\n\n`;
+    
+    // Add educational takeaway
+    detailed += `## Key Takeaways\n\n`;
+    detailed += `1. Always consider the trade-offs between speed and completeness\n`;
+    detailed += `2. Break complex problems into manageable components\n`;
+    detailed += `3. Document decisions for future reference\n`;
+    detailed += `4. Plan for scalability from the beginning\n`;
+    
+    return detailed;
+  }
+  
+  /**
+   * Format response for concise mode
+   */
+  private formatConciseResponse(content: string): string {
+    // Remove detailed sections, keep only essential content
+    let concise = content
+      .split('##').slice(0, 3).join('##') // Keep first 2-3 sections
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    
+    // Limit length
+    if (concise.length > 1500) {
+      concise = concise.substring(0, 1500) + '\n\n*[Response truncated for brevity]*';
+    }
+    
+    return concise;
   }
 
   /**

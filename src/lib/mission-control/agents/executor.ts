@@ -35,6 +35,7 @@ export interface ExecutionOptions {
   onToken?: (token: string) => void;
   onProgress?: (progress: number, message: string) => void;
   onModelSwitch?: (fromModel: string, toModel: string, reason: string) => void;
+  responseMode?: "detailed" | "balanced" | "concise";
 }
 
 export interface ExecutionResult {
@@ -94,7 +95,8 @@ export class AgentExecutor {
         const demoResult = await demoExecutor.executeDemoResponse(
           agentId,
           classification.intent,
-          prompt
+          prompt,
+          opts.responseMode ?? "balanced"
         );
         
         if (opts.streamTokens && opts.onToken) {
@@ -144,7 +146,8 @@ export class AgentExecutor {
           const demoResult = await demoExecutor.executeDemoResponse(
             agentId,
             classification.intent,
-            prompt
+            prompt,
+            opts.responseMode ?? "balanced"
           );
           
           if (opts.streamTokens && opts.onToken) {
@@ -254,7 +257,8 @@ export class AgentExecutor {
       const demoResult = await demoExecutor.executeDemoResponse(
         agentId,
         classification.intent,
-        prompt
+        prompt,
+        opts.responseMode ?? "balanced"
       );
       
       // Stream demo tokens if enabled
