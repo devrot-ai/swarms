@@ -90,10 +90,35 @@ export default function WorkspacePage() {
     fetch("/api/mission-control/health")
       .then((r) => r.json())
       .then((data) => {
-        const models: {provider: string; model: string; label: string}[] = data?.models ?? [];
-        setAvailableModels(models);
-        const current: string = data?.selectedModel ?? "";
-        setSelectedModel(models.find(m => m.model === current)?.model ?? models[0]?.model ?? "");
+        // Parse the new health response format
+        const modelChecks = data?.models?.checks ?? [];
+        const models = modelChecks
+          .filter((m: { available: boolean }) => m.available)
+          .map((m: { model: string; name: string; provider: string }) => ({
+            provider: m.provider,
+            model: m.model,
+            label: `${m.name} (${m.provider})`,
+          }));
+        
+        // If no models available, show all as options anyway
+        if (models.length === 0) {
+          const allModels = modelChecks.map((m: { model: string; name: string; provider: string }) => ({
+            provider: m.provider,
+            model: m.model,
+            label: `${m.name} (${m.provider})`,
+          }));
+          setAvailableModels(allModels);
+        } else {
+          setAvailableModels(models);
+        }
+        
+        setSelectedModel(models[0]?.model ?? modelChecks[0]?.model ?? "");
+        
+        // Show recommendations in timeline
+        const recommendations = data?.recommendations ?? [];
+        if (recommendations.length > 0 && recommendations[0] !== "All systems operational. Ready to process requests.") {
+          setTimeline((prev) => [...prev, ...recommendations.map((r: string) => `System: ${r}`)]);
+        }
       })
       .catch(() => {/* health endpoint unreachable */});
   }, []);
@@ -173,11 +198,25 @@ export default function WorkspacePage() {
               toolCalls?: Array<{ tool: string; result: unknown }>;
               intent?: string;
               confidence?: number;
+              from?: string;
+              to?: string;
+              reason?: string;
+              success?: boolean;
+              fallbacksUsed?: string[];
+              recoverable?: boolean;
+              suggestion?: string;
             };
 
             if (data.type === "classification") {
               // Intent classification result - show in timeline
               setTimeline((prev) => [...prev, `Intent: ${data.intent} (${Math.round((data.confidence ?? 0) * 100)}% confidence)`]);
+            } else if (data.type === "model_switch") {
+              // Model fallback occurred
+              setTimeline((prev) => [...prev, `Switching model: ${data.from} -> ${data.to} (${data.reason?.slice(0, 50)}...)`]);
+            } else if (data.type === "pipeline") {
+              // Pipeline info
+              const agents = (data as unknown as { agents: Array<{name: string}> }).agents;
+              setTimeline((prev) => [...prev, `Pipeline: ${agents.map(a => a.name).join(" -> ")}`]);
             } else if (data.type === "progress") {
               // New agent step starting — reset streaming text
               setStreamingText("");
@@ -217,16 +256,19 @@ export default function WorkspacePage() {
               }
             } else if (data.type === "error") {
               setCurrentProgress(null);
+              const suggestion = data.suggestion ? `\n\n${data.suggestion}` : "";
+              const recoveryHint = data.recoverable ? "\n\nThis error may be temporary - try again in a moment." : "";
               setChatMessages((prev) => [
                 ...prev,
                 {
                   id: `msg_err_${Date.now()}`,
                   role: "agent",
                   agent: "system",
-                  text: `Error: ${data.error ?? "Agent pipeline failed."}`,
+                  text: `Error: ${data.error ?? "Agent pipeline failed."}${suggestion}${recoveryHint}`,
                   timestamp: new Date().toISOString(),
                 },
               ]);
+              setTimeline((prev) => [...prev, `Error: ${data.error?.slice(0, 50)}...`]);
             }
             // "done" type — pipeline complete, nothing to render
           } catch {
