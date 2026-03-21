@@ -18,8 +18,10 @@ import {
   type ResponseMode, 
   getResponseModePrompt, 
   responseModes,
-  getDemoResponseSuffix 
+  getDemoResponseSuffix,
+  getContextMultiplier,
 } from "@/lib/mission-control/responseMode";
+import { contextManager } from "@/lib/mission-control/contextManager";
 
 interface ChatInput {
   sessionId: string;
@@ -183,17 +185,33 @@ function emitMissionEvent(
   });
 }
 
-// Build context from session history
-function buildSessionContext(sessionId: string): string {
+// Build context from session history with extended context management
+function buildSessionContext(sessionId: string, responseMode: ResponseMode = "balanced"): string {
   const audit = missionStore.getAudits(sessionId);
   const artifacts = missionStore.getArtifacts(sessionId);
   const session = missionStore.getSession(sessionId);
+  
+  // Get context multiplier based on response mode
+  const contextMultiplier = getContextMultiplier(responseMode);
+  const maxTurns = Math.floor(10 * contextMultiplier);
 
   const parts: string[] = [];
   
   if (session) {
     parts.push(`Mission: ${session.mission.objective}`);
     parts.push(`Status: ${session.status}`);
+  }
+  
+  // Add conversation context from context manager
+  const conversationContext = contextManager.getFormattedContext(sessionId, maxTurns);
+  if (conversationContext) {
+    parts.push(`\n${conversationContext}`);
+  }
+  
+  // Get context stats for transparency
+  const stats = contextManager.getStats(sessionId);
+  if (stats.turnCount > 0) {
+    parts.push(`\n[Context: ${stats.turnCount} turns, ${stats.keyTopicsCount} topics tracked]`);
   }
   
   if (audit.length > 0) {
@@ -227,6 +245,13 @@ export async function POST(req: NextRequest) {
 
     // Emit user message
     emitMissionEvent(sessionId, "user", "THOUGHT", `User: ${message}`, 1.0, "RUNNING");
+
+    // Track conversation in context manager
+    contextManager.addTurn(sessionId, {
+      role: "user",
+      content: message,
+      responseMode: responseMode,
+    });
 
     // Create a task for this request
     const mainTask = createAgentTask(
@@ -273,8 +298,8 @@ export async function POST(req: NextRequest) {
             })),
           });
 
-          // Build context
-          const context = buildSessionContext(sessionId);
+          // Build context with extended context management
+          const context = buildSessionContext(sessionId, responseMode);
           const previousResults: string[] = [];
 
           // Step 2: Execute each agent in the pipeline
@@ -351,6 +376,18 @@ export async function POST(req: NextRequest) {
               result.success ? 0.9 : 0.5,
               result.success ? "RUNNING" : "WARNING",
             );
+
+            // Track agent response in context manager
+            contextManager.addTurn(sessionId, {
+              role: "agent",
+              content: result.content,
+              agentId: agentId,
+              responseMode: responseMode,
+              metadata: {
+                intent: classification.intent,
+                tokensUsed: result.tokensUsed,
+              },
+            });
 
             // Send response
             send({

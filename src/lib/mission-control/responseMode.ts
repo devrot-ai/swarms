@@ -3,6 +3,12 @@
  * 
  * This module defines the different response modes that control how AI agents
  * present their answers - from detailed step-by-step explanations to concise direct answers.
+ * 
+ * Features:
+ * - Teacher-style explanations with reasoning
+ * - Alternative strategy suggestions
+ * - Dynamic adaptation based on user preference
+ * - Learning-focused educational insights
  */
 
 export type ResponseMode = "detailed" | "concise" | "balanced";
@@ -15,19 +21,23 @@ export interface ResponseModeConfig {
   includeReasoning: boolean;
   includeAlternatives: boolean;
   includeSteps: boolean;
+  includeTeachingMoments: boolean;
   maxLength: "short" | "medium" | "long";
+  contextWindowMultiplier: number; // How much extra context to include
 }
 
 export const responseModes: Record<ResponseMode, ResponseModeConfig> = {
   detailed: {
     id: "detailed",
     label: "Detailed Analysis",
-    description: "Step-by-step explanation with reasoning and alternatives",
-    icon: "book",
+    description: "Step-by-step explanation with reasoning, alternatives, and teaching moments",
+    icon: "book-open",
     includeReasoning: true,
     includeAlternatives: true,
     includeSteps: true,
+    includeTeachingMoments: true,
     maxLength: "long",
+    contextWindowMultiplier: 1.5,
   },
   balanced: {
     id: "balanced",
@@ -37,7 +47,9 @@ export const responseModes: Record<ResponseMode, ResponseModeConfig> = {
     includeReasoning: true,
     includeAlternatives: false,
     includeSteps: false,
+    includeTeachingMoments: false,
     maxLength: "medium",
+    contextWindowMultiplier: 1.0,
   },
   concise: {
     id: "concise",
@@ -47,7 +59,9 @@ export const responseModes: Record<ResponseMode, ResponseModeConfig> = {
     includeReasoning: false,
     includeAlternatives: false,
     includeSteps: false,
+    includeTeachingMoments: false,
     maxLength: "short",
+    contextWindowMultiplier: 0.5,
   },
 };
 
@@ -59,70 +73,166 @@ export function getResponseModePrompt(mode: ResponseMode): string {
   
   const prompts: Record<ResponseMode, string> = {
     detailed: `
-RESPONSE FORMAT: DETAILED ANALYSIS MODE
+RESPONSE FORMAT: DETAILED ANALYSIS MODE (Teacher-Style)
 
-Structure your response with the following sections:
+You are explaining your solution like an experienced mentor teaching a student. Structure your response to maximize learning and understanding.
 
-## Understanding the Problem
-First, restate the problem in your own words to confirm understanding. Identify key requirements and constraints.
+## 1. Understanding the Problem
+First, restate the problem in your own words to confirm understanding:
+- What is being asked?
+- What are the constraints?
+- What would a successful solution look like?
 
-## My Approach
-Explain your reasoning step-by-step like a teacher would:
-1. Break down your thought process
-2. Explain WHY you chose this approach
-3. Highlight key decisions and trade-offs
+## 2. My Thought Process (Reasoning)
+Walk through your reasoning step-by-step, as if thinking out loud:
+1. "First, I considered..."
+2. "This led me to think about..."
+3. "I weighed the trade-offs between..."
+4. "Ultimately, I decided on this approach because..."
 
-## Solution
+## 3. The Solution
 Provide the complete solution with:
-- Clear organization
-- Inline comments explaining key parts
-- Best practices highlighted
+- Clear organization and structure
+- Inline comments explaining WHY, not just WHAT
+- Best practices highlighted with explanations
+- Common pitfalls to avoid
 
-## Reasoning Behind This Approach
-Explain the methodology:
-- Why this solution fits the requirements
-- What principles or patterns you applied
-- What makes this approach effective
+## 4. Why This Approach? (Teaching Moment)
+Explain the methodology like a teacher:
+- What principles or patterns did you apply?
+- Why is this approach effective for this type of problem?
+- What makes this solution maintainable/scalable/robust?
+- What would you tell a junior developer to watch out for?
 
-## Alternative Strategies
-Suggest 2-3 alternative approaches that could work:
-1. **Alternative A**: [Description] - Pros: ... Cons: ...
-2. **Alternative B**: [Description] - Pros: ... Cons: ...
+## 5. Alternative Strategies
+Present 2-3 alternative approaches with honest analysis:
 
-## Key Takeaways
-Summarize the most important learning points for educational value.
+**Alternative A: [Name]**
+- Approach: [Brief description]
+- When to use: [Best scenarios]
+- Pros: [Advantages]
+- Cons: [Disadvantages]
+- Why I didn't choose this: [Reasoning]
+
+**Alternative B: [Name]**
+- Approach: [Brief description]
+- When to use: [Best scenarios]  
+- Pros: [Advantages]
+- Cons: [Disadvantages]
+- Why I didn't choose this: [Reasoning]
+
+## 6. Key Takeaways
+Summarize the most important learning points:
+1. [Most critical insight]
+2. [Second key learning]
+3. [Third important point]
+4. [Pattern or principle to remember]
+
+## 7. Further Learning (Optional)
+If relevant, suggest:
+- Related concepts to explore
+- Common variations of this problem
+- Advanced techniques for future consideration
 `,
     
     balanced: `
 RESPONSE FORMAT: BALANCED MODE
 
-Structure your response with:
+Provide a clear, well-organized response that includes key reasoning without excessive detail.
 
 ## Solution
-Provide a clear, well-organized solution.
+Deliver the solution directly, organized clearly with:
+- Main implementation or answer
+- Key code/steps highlighted
+- Brief inline comments for important parts
 
 ## Key Reasoning
-Briefly explain 2-3 key decisions and why they matter:
-- What approach you took and why
+Explain 2-3 key decisions in 1-2 sentences each:
+- Why you chose this approach
 - Important trade-offs considered
+- Any critical considerations
 
 ## Quick Summary
-One paragraph summarizing the solution and its benefits.
+One paragraph summarizing:
+- What the solution does
+- Why this approach works well
+- Any important caveats or next steps
 `,
     
     concise: `
 RESPONSE FORMAT: CONCISE MODE
 
-Provide a direct, actionable response:
-- Lead with the solution or answer
-- Minimize explanation - only include what's essential
-- Use bullet points for clarity
-- Skip alternatives unless critical
-- Keep total response under 200 words when possible
+Provide a direct, actionable response optimized for efficiency:
+
+- Lead with the solution or answer immediately
+- Use bullet points and code blocks
+- Include only essential explanation
+- Skip background, alternatives, and extended reasoning
+- Target response length: under 200 words when possible
+- If code is required, provide clean, minimal implementation
+- One-line summary at the end if helpful
 `,
   };
   
   return prompts[mode];
+}
+
+/**
+ * Generate teaching-style explanation for a concept
+ */
+export function generateTeachingExplanation(
+  concept: string,
+  context: string,
+  difficulty: "beginner" | "intermediate" | "advanced" = "intermediate"
+): string {
+  const levelAdjustments = {
+    beginner: "Explain this as if to someone new to programming. Use simple analogies and avoid jargon.",
+    intermediate: "Assume familiarity with basic concepts. Focus on practical application and best practices.",
+    advanced: "Assume deep technical knowledge. Focus on nuances, edge cases, and optimization.",
+  };
+
+  return `
+When explaining "${concept}" in the context of "${context}":
+
+${levelAdjustments[difficulty]}
+
+Structure your explanation:
+1. **The Core Idea**: What is this and why does it matter?
+2. **How It Works**: Step-by-step breakdown
+3. **Real Example**: Concrete application
+4. **Common Mistakes**: What to avoid
+5. **Pro Tip**: Expert insight
+`;
+}
+
+/**
+ * Generate alternative strategy analysis
+ */
+export function generateAlternativesAnalysis(
+  primaryApproach: string,
+  problemType: string
+): string {
+  return `
+For this ${problemType} problem, I chose ${primaryApproach}. Here are alternatives I considered:
+
+**Alternative 1: Simpler Approach**
+- Trade-off: Less complexity vs fewer features
+- Best when: Prototyping or tight deadlines
+- Risk: May need refactoring later
+
+**Alternative 2: More Robust Approach**  
+- Trade-off: More upfront work vs long-term stability
+- Best when: Production systems or critical paths
+- Risk: Over-engineering for simple cases
+
+**Alternative 3: Modern/Experimental Approach**
+- Trade-off: Latest features vs ecosystem maturity
+- Best when: Greenfield projects with flexibility
+- Risk: Less community support or documentation
+
+**Why I Chose ${primaryApproach}:**
+[Specific reasoning based on the problem context]
+`;
 }
 
 /**
@@ -138,16 +248,22 @@ export function getDemoResponseSuffix(mode: ResponseMode): string {
 
 ---
 
-## Why This Approach?
+## My Reasoning (Why This Approach?)
 
-**Reasoning:** This solution was chosen because it balances practicality with best practices. Here's my thought process:
+**How I approached this problem:**
 
-1. **Problem Analysis**: I identified the core requirements and constraints
-2. **Pattern Recognition**: This problem fits a common pattern that has proven solutions
-3. **Trade-off Evaluation**: I weighed simplicity vs flexibility, performance vs maintainability
-4. **Best Practice Alignment**: The solution follows industry standards and established conventions
+1. **Problem Analysis**: I first broke down the request to understand the core requirements and constraints. This helps ensure the solution addresses what's actually needed, not just what seems obvious.
 
-**Teaching Moment:** When approaching similar problems, start by breaking them into smaller, manageable parts. This makes complex challenges more tractable.
+2. **Pattern Recognition**: This type of problem follows a common pattern I've seen before. Recognizing these patterns helps apply proven solutions rather than reinventing the wheel.
+
+3. **Trade-off Evaluation**: I considered multiple factors:
+   - *Simplicity vs Flexibility*: Chose a balanced approach that's easy to understand but can be extended
+   - *Performance vs Maintainability*: Prioritized code clarity while keeping performance reasonable
+   - *Short-term vs Long-term*: Built for current needs while leaving room for growth
+
+4. **Best Practice Alignment**: The solution follows established conventions and standards, making it easier for others to understand and maintain.
+
+**Teaching Moment:** When approaching similar problems, always start by clearly defining what success looks like. This prevents scope creep and keeps you focused on delivering value.
 `;
   }
   
@@ -156,23 +272,28 @@ export function getDemoResponseSuffix(mode: ResponseMode): string {
 
 ## Alternative Strategies Considered
 
-**Strategy 1: Simpler Approach**
-- *Description*: A more basic implementation with fewer features
-- *Pros*: Faster to implement, easier to understand
-- *Cons*: Less scalable, may need refactoring later
-- *When to use*: Prototyping or small projects
+I evaluated several approaches before settling on this solution:
 
-**Strategy 2: More Robust Approach**
-- *Description*: Enterprise-grade implementation with extensive error handling
-- *Pros*: Production-ready, handles edge cases
-- *Cons*: More complex, longer development time
-- *When to use*: Critical production systems
+**Strategy 1: Minimal Viable Approach**
+- *What it is*: The simplest possible implementation that meets basic requirements
+- *Pros*: Fast to implement, easy to understand, low risk
+- *Cons*: May need significant rework as requirements evolve
+- *When to use*: Prototyping, proof-of-concept, or when requirements are uncertain
+- *Why I didn't use it here*: The problem warranted a more complete solution
 
-**Strategy 3: Modern Approach**
-- *Description*: Using cutting-edge tools and patterns
-- *Pros*: Best performance, latest features
-- *Cons*: Steeper learning curve, newer ecosystem
-- *When to use*: New projects without legacy constraints
+**Strategy 2: Enterprise-Grade Approach**
+- *What it is*: Full-featured implementation with extensive error handling, logging, and configuration
+- *Pros*: Production-ready, handles edge cases, highly maintainable
+- *Cons*: More complex, longer to implement, may be overkill for simple cases
+- *When to use*: Mission-critical systems, large teams, long-term projects
+- *Why I didn't use it here*: Would add unnecessary complexity for this use case
+
+**Strategy 3: Framework-Heavy Approach**
+- *What it is*: Leveraging existing libraries and frameworks extensively
+- *Pros*: Faster development, battle-tested code, community support
+- *Cons*: Dependencies, potential bloat, learning curve
+- *When to use*: Standard use cases where frameworks excel
+- *Why I didn't use it here*: Custom solution better fits the specific requirements
 `;
   }
   
@@ -181,13 +302,55 @@ export function getDemoResponseSuffix(mode: ResponseMode): string {
 
 ## Step-by-Step Breakdown
 
-1. **Step 1 - Setup**: Initialize the project structure and dependencies
-2. **Step 2 - Core Logic**: Implement the main functionality 
-3. **Step 3 - Integration**: Connect components and handle data flow
-4. **Step 4 - Testing**: Verify the solution works correctly
-5. **Step 5 - Refinement**: Optimize and polish the implementation
+Here's how I built this solution, broken into clear phases:
 
-*Each step builds on the previous one, creating a solid foundation for the next.*
+**Phase 1: Setup & Foundation**
+- Established the basic structure
+- Set up necessary dependencies
+- Created the skeleton for the main components
+- *Key decision*: Started with the data model to ensure a solid foundation
+
+**Phase 2: Core Implementation**
+- Built the main functionality piece by piece
+- Added validation and error handling
+- Connected components together
+- *Key decision*: Prioritized the critical path first
+
+**Phase 3: Integration & Polish**
+- Connected all parts into a working whole
+- Added finishing touches and edge case handling
+- Verified everything works together
+- *Key decision*: Tested early and often to catch issues
+
+**Phase 4: Review & Refinement**
+- Reviewed for best practices
+- Optimized where beneficial
+- Added documentation and comments
+- *Key decision*: Focused on clarity over cleverness
+`;
+  }
+
+  if (config.includeTeachingMoments) {
+    suffix += `
+
+## Learning Points
+
+**Key Takeaways from this solution:**
+
+1. **Start with the end in mind**: Before writing any code, I clearly defined what success looks like. This keeps you focused and prevents scope creep.
+
+2. **Break complex problems into smaller pieces**: Instead of tackling everything at once, I divided the problem into manageable chunks. Each piece is easier to understand, test, and debug.
+
+3. **Consider the reader**: Code is read more often than it's written. I prioritized clarity and added comments explaining *why*, not just *what*.
+
+4. **Think about edge cases early**: Anticipating what could go wrong helps build more robust solutions. I considered failure modes from the start.
+
+5. **Balance pragmatism with perfectionism**: A working solution today is often better than a perfect solution next month. Ship, then iterate.
+
+**Further Exploration:**
+- Look into related patterns that solve similar problems
+- Consider how this approach scales with increased complexity
+- Explore how different frameworks handle this type of challenge
 `;
   }
   
@@ -210,9 +373,8 @@ export function formatResponseForMode(
   
   // For concise mode, strip extra sections
   if (mode === "concise") {
-    // Remove reasoning sections from response
     let formatted = content
-      .replace(/##\s*(Why This Approach|Alternative Strategies|Reasoning|Teaching Moment)[^\n]*\n[\s\S]*?(?=##|$)/gi, "")
+      .replace(/##\s*(Why This Approach|Alternative Strategies|Reasoning|Teaching Moment|My Reasoning|Learning Points|Key Takeaways|Further|Step-by-Step)[^\n]*\n[\s\S]*?(?=##|$)/gi, "")
       .replace(/\n{3,}/g, "\n\n")
       .trim();
     
@@ -221,9 +383,25 @@ export function formatResponseForMode(
   
   // For detailed mode, add metadata header
   if (mode === "detailed" && metadata) {
-    const header = `> **Analysis by ${metadata.agentName || "Agent"}** | Intent: ${metadata.intent || "general"} | Mode: ${config.label}\n\n`;
+    const header = `> **Analysis by ${metadata.agentName || "Agent"}** | Mode: ${config.label}\n> Intent: ${metadata.intent || "general"} | Processing time: ${metadata.processingTime || "N/A"}ms\n\n`;
     return header + content;
   }
   
   return content;
+}
+
+/**
+ * Get context window size multiplier for mode
+ */
+export function getContextMultiplier(mode: ResponseMode): number {
+  return responseModes[mode].contextWindowMultiplier;
+}
+
+/**
+ * Check if mode should include a specific feature
+ */
+export function shouldInclude(mode: ResponseMode, feature: keyof ResponseModeConfig): boolean {
+  const config = responseModes[mode];
+  const value = config[feature];
+  return typeof value === "boolean" ? value : false;
 }

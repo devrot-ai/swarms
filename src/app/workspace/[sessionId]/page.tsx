@@ -92,9 +92,24 @@ export default function WorkspacePage() {
   type ResponseMode = "detailed" | "balanced" | "concise";
   const [responseMode, setResponseMode] = useState<ResponseMode>("balanced");
   const responseModeOptions = [
-    { id: "detailed" as ResponseMode, label: "Detailed", desc: "Step-by-step with reasoning" },
-    { id: "balanced" as ResponseMode, label: "Balanced", desc: "Clear answer with key points" },
-    { id: "concise" as ResponseMode, label: "Concise", desc: "Direct, minimal explanation" },
+    { 
+      id: "detailed" as ResponseMode, 
+      label: "Detailed", 
+      desc: "Teacher-style explanation with step-by-step reasoning, alternative strategies, and learning insights",
+      icon: "book"
+    },
+    { 
+      id: "balanced" as ResponseMode, 
+      label: "Balanced", 
+      desc: "Clear answer with key reasoning points - best for most tasks",
+      icon: "scale"
+    },
+    { 
+      id: "concise" as ResponseMode, 
+      label: "Concise", 
+      desc: "Direct answer with minimal explanation - fastest responses",
+      icon: "zap"
+    },
   ];
 
   /* ---- Fetch available models from all providers on mount ---- */
@@ -555,7 +570,14 @@ export default function WorkspacePage() {
                 <h4>What would you like the swarm to do?</h4>
                 <p>Type a command below — plan a strategy, research a topic, assign tasks, or ask for a status update.</p>
                 <div className={styles.responseModeHint}>
-                  <strong>Response Mode:</strong> {responseModeOptions.find(m => m.id === responseMode)?.desc}
+                  <strong>Current Mode: {responseModeOptions.find(m => m.id === responseMode)?.label}</strong>
+                  <br />
+                  {responseModeOptions.find(m => m.id === responseMode)?.desc}
+                  {responseMode === "detailed" && (
+                    <div style={{ marginTop: '8px', fontSize: '0.75rem', opacity: 0.8 }}>
+                      Detailed mode includes: reasoning explanation, alternative strategies, and learning insights
+                    </div>
+                  )}
                 </div>
                 <div className={styles.suggestions}>
                   {[

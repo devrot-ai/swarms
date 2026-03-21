@@ -476,6 +476,7 @@ export class DemoModeExecutor {
   
   /**
    * Format response for detailed mode with reasoning and alternatives
+   * Provides teacher-style explanations with educational value
    */
   private formatDetailedResponse(
     content: string,
@@ -485,44 +486,209 @@ export class DemoModeExecutor {
   ): string {
     let detailed = content;
     
-    // Add thinking steps if available
+    // Add thinking steps with teacher-style narration
     if (response.thinkingSteps.length > 0) {
-      detailed += `\n\n---\n\n## My Approach & Reasoning\n\n`;
-      detailed += `**Thought Process:**\n`;
+      detailed += `\n\n---\n\n## My Reasoning Process (How I Approached This)\n\n`;
+      detailed += `*Let me walk you through my thought process, as if explaining to a colleague:*\n\n`;
       response.thinkingSteps.forEach((step, i) => {
-        detailed += `${i + 1}. ${step}\n`;
+        detailed += `**Step ${i + 1}:** ${step}\n`;
+        // Add why this step matters
+        detailed += `   *Why this matters:* Each stage builds on the previous one to create a solid foundation.\n\n`;
       });
-      detailed += `\n**Why this approach?** This methodology was chosen because it provides a systematic way to address the request while considering best practices and potential edge cases.`;
+      detailed += `### The Key Decision\n`;
+      detailed += `**Why this approach?** This methodology was chosen because it:\n`;
+      detailed += `- Follows established best practices in the industry\n`;
+      detailed += `- Balances thoroughness with practical time constraints\n`;
+      detailed += `- Provides clear checkpoints for validation\n`;
+      detailed += `- Scales well as requirements evolve\n`;
     }
     
-    // Add tools used
+    // Add tools used with explanations
     if (response.toolsUsed.length > 0) {
-      detailed += `\n\n## Tools & Resources Used\n\n`;
+      detailed += `\n\n## Tools & Resources I Used\n\n`;
+      detailed += `*Here's what I leveraged and why:*\n\n`;
       response.toolsUsed.forEach(tool => {
-        detailed += `- **${tool.replace(/_/g, ' ')}**: Applied to gather information and validate approach\n`;
+        const toolExplanations: Record<string, string> = {
+          market_research: "Essential for understanding the competitive landscape and identifying opportunities",
+          competitor_analysis: "Helps identify what's working in the market and where gaps exist",
+          data_analysis: "Transforms raw data into actionable insights",
+          architecture_design: "Creates the blueprint that guides implementation",
+          code_generation: "Accelerates development while maintaining quality standards",
+          security_review: "Ensures the solution is robust against potential threats",
+          web_search: "Gathers current information and best practices",
+          budget_planning: "Aligns resources with strategic priorities",
+        };
+        const explanation = toolExplanations[tool] || "Applied to ensure thorough analysis";
+        detailed += `- **${tool.replace(/_/g, ' ')}**: ${explanation}\n`;
       });
     }
     
-    // Add alternative strategies
-    detailed += `\n\n## Alternative Strategies Considered\n\n`;
-    detailed += `**Alternative 1: Incremental Approach**\n`;
-    detailed += `- *Description*: Start with a minimal viable solution and iterate\n`;
-    detailed += `- *Pros*: Faster initial delivery, early feedback\n`;
-    detailed += `- *Cons*: May require significant refactoring later\n\n`;
+    // Add context-aware alternative strategies
+    detailed += `\n\n## Alternative Strategies I Considered\n\n`;
+    detailed += `*Before settling on my approach, I evaluated these alternatives:*\n\n`;
     
-    detailed += `**Alternative 2: Comprehensive Approach**\n`;
-    detailed += `- *Description*: Build a complete solution from the start\n`;
-    detailed += `- *Pros*: More robust, handles edge cases early\n`;
-    detailed += `- *Cons*: Longer initial development time\n\n`;
+    const altStrategies = this.getAlternativeStrategies(intent);
+    altStrategies.forEach((alt, i) => {
+      detailed += `### Alternative ${i + 1}: ${alt.name}\n`;
+      detailed += `- **Approach**: ${alt.description}\n`;
+      detailed += `- **Best for**: ${alt.bestFor}\n`;
+      detailed += `- **Pros**: ${alt.pros}\n`;
+      detailed += `- **Cons**: ${alt.cons}\n`;
+      detailed += `- **Why I didn't choose this**: ${alt.whyNot}\n\n`;
+    });
     
-    // Add educational takeaway
-    detailed += `## Key Takeaways\n\n`;
-    detailed += `1. Always consider the trade-offs between speed and completeness\n`;
-    detailed += `2. Break complex problems into manageable components\n`;
-    detailed += `3. Document decisions for future reference\n`;
-    detailed += `4. Plan for scalability from the beginning\n`;
+    // Add educational takeaways tailored to the intent
+    const takeaways = this.getKeyTakeaways(intent);
+    detailed += `## Key Takeaways for Learning\n\n`;
+    detailed += `*Remember these principles for similar problems:*\n\n`;
+    takeaways.forEach((takeaway, i) => {
+      detailed += `${i + 1}. **${takeaway.title}**: ${takeaway.description}\n`;
+    });
+    
+    // Add "Further Learning" section
+    detailed += `\n## Further Learning\n\n`;
+    detailed += `If you want to dive deeper into this topic:\n`;
+    detailed += `- Explore related patterns and how they interconnect\n`;
+    detailed += `- Practice with variations of this problem\n`;
+    detailed += `- Consider how different constraints would change the approach\n`;
     
     return detailed;
+  }
+  
+  /**
+   * Get alternative strategies based on intent
+   */
+  private getAlternativeStrategies(intent: string): Array<{
+    name: string;
+    description: string;
+    bestFor: string;
+    pros: string;
+    cons: string;
+    whyNot: string;
+  }> {
+    const strategies: Record<string, Array<{
+      name: string;
+      description: string;
+      bestFor: string;
+      pros: string;
+      cons: string;
+      whyNot: string;
+    }>> = {
+      strategic_planning: [
+        {
+          name: "Bottom-Up Planning",
+          description: "Start with team capabilities and build strategy around them",
+          bestFor: "Resource-constrained environments",
+          pros: "More realistic, better buy-in from teams",
+          cons: "May limit ambition, slower to pivot",
+          whyNot: "Top-down approach provides clearer strategic direction"
+        },
+        {
+          name: "Competitive Mirroring",
+          description: "Analyze and adapt successful competitor strategies",
+          bestFor: "Fast-following in established markets",
+          pros: "Proven concepts, lower risk",
+          cons: "Less differentiation, always playing catch-up",
+          whyNot: "Original strategy offers better competitive advantage"
+        },
+      ],
+      technical_build: [
+        {
+          name: "Monolithic Architecture",
+          description: "Build as a single, unified application",
+          bestFor: "Smaller teams, simpler requirements",
+          pros: "Simpler deployment, easier debugging",
+          cons: "Harder to scale, technology lock-in",
+          whyNot: "Modular approach offers better long-term flexibility"
+        },
+        {
+          name: "Off-the-Shelf Solution",
+          description: "Use existing products with customization",
+          bestFor: "Common business problems",
+          pros: "Faster time-to-market, proven stability",
+          cons: "Less flexibility, ongoing licensing costs",
+          whyNot: "Custom solution better fits specific requirements"
+        },
+      ],
+      research: [
+        {
+          name: "Quantitative-Only Research",
+          description: "Focus purely on data and metrics",
+          bestFor: "Well-defined hypotheses",
+          pros: "Objective, easy to compare",
+          cons: "Misses nuance, may overlook insights",
+          whyNot: "Mixed methods provide richer insights"
+        },
+        {
+          name: "Expert Interviews",
+          description: "Rely on domain expert opinions",
+          bestFor: "Emerging fields with limited data",
+          pros: "Deep insights, industry context",
+          cons: "Subjective, potential bias",
+          whyNot: "Broader research provides more balanced view"
+        },
+      ],
+      default: [
+        {
+          name: "Minimal Viable Approach",
+          description: "Do the least work that could possibly work",
+          bestFor: "Prototyping and validation",
+          pros: "Fast, low investment",
+          cons: "May need complete rework later",
+          whyNot: "This request warranted a more complete solution"
+        },
+        {
+          name: "Enterprise-Grade Approach",
+          description: "Full-featured with extensive safeguards",
+          bestFor: "Mission-critical systems",
+          pros: "Robust, comprehensive",
+          cons: "Takes longer, potentially over-engineered",
+          whyNot: "Would add unnecessary complexity for this use case"
+        },
+      ],
+    };
+    
+    return strategies[intent] || strategies.default;
+  }
+  
+  /**
+   * Get key takeaways based on intent
+   */
+  private getKeyTakeaways(intent: string): Array<{ title: string; description: string }> {
+    const takeaways: Record<string, Array<{ title: string; description: string }>> = {
+      strategic_planning: [
+        { title: "Start with the end in mind", description: "Define clear success criteria before planning" },
+        { title: "Validate assumptions early", description: "Test critical hypotheses before committing resources" },
+        { title: "Plan for adaptation", description: "Build in checkpoints to adjust as you learn" },
+        { title: "Communicate the 'why'", description: "Strategy without context leads to poor execution" },
+      ],
+      technical_build: [
+        { title: "Design before coding", description: "A clear architecture prevents costly rewrites" },
+        { title: "Prioritize maintainability", description: "Code is read more often than it's written" },
+        { title: "Test as you build", description: "Finding bugs early is much cheaper than finding them late" },
+        { title: "Document decisions", description: "Future you will thank present you" },
+      ],
+      research: [
+        { title: "Define your question clearly", description: "Vague questions lead to vague answers" },
+        { title: "Use multiple sources", description: "Triangulation improves reliability" },
+        { title: "Distinguish fact from opinion", description: "Be explicit about what's proven vs. assumed" },
+        { title: "Make it actionable", description: "Research without recommendations is just trivia" },
+      ],
+      marketing: [
+        { title: "Know your audience", description: "Effective messaging requires deep understanding of who you're reaching" },
+        { title: "Test and iterate", description: "Let data guide your creative decisions" },
+        { title: "Be consistent", description: "Brand building requires sustained, coherent messaging" },
+        { title: "Measure what matters", description: "Vanity metrics can be misleading" },
+      ],
+      default: [
+        { title: "Break it down", description: "Complex problems become manageable when decomposed" },
+        { title: "Start with constraints", description: "Understanding limitations helps focus solutions" },
+        { title: "Seek feedback early", description: "External perspective catches blind spots" },
+        { title: "Document your reasoning", description: "Good decisions look obvious in hindsight; capture why you made them" },
+      ],
+    };
+    
+    return takeaways[intent] || takeaways.default;
   }
   
   /**
