@@ -1,0 +1,118 @@
+.page {
+  min-height: 100vh;
+  padding: 24px;
+  background: linear-gradient(180deg, #080b13 0%, #111827 40%, #161f35 100%);
+  color: #ecf2ff;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.status {
+  font-size: 0.9rem;
+  color: #9ec2ff;
+}
+
+.layout {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 280px minmax(0, 1fr) 320px;
+}
+
+.panel {
+  background: rgba(16, 23, 42, 0.65);
+  border: 1px solid rgba(147, 197, 253, 0.15);
+  border-radius: 16px;
+  padding: 14px;
+  backdrop-filter: blur(5px);
+}
+
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 72vh;
+  overflow: auto;
+}
+
+.stepCard {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(15, 23, 42, 0.7);
+}
+
+.stepMeta {
+  margin-top: 6px;
+  color: #a8b7d3;
+  font-size: 0.85rem;
+}
+
+.tabRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.tabBtn {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(2, 6, 23, 0.5);
+  color: #dbeafe;
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.tabBtnActive {
+  background: linear-gradient(90deg, #3b82f6, #0891b2);
+  border-color: transparent;
+}
+
+.output {
+  max-height: 68vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.eventLog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 72vh;
+  overflow: auto;
+}
+
+.eventItem {
+  border-left: 2px solid #60a5fa;
+  padding-left: 8px;
+  font-size: 0.9rem;
+}
+
+.eventTime {
+  color: #9ec2ff;
+  font-size: 0.8rem;
+}
+
+.error {
+  color: #fecaca;
+}
+
+@media (max-width: 1100px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
