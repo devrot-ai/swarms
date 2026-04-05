@@ -1,4 +1,4 @@
-import { runMissionWorker } from "@/workers/runner";
+import { runMissionWorker } from "./runner";
 
 export interface ExecuteStepInput {
   missionId: string;
