@@ -125,7 +125,7 @@ def create_mission_from_proposal(db: Session, proposal: Proposal):
     return mission, plan
 
 
-def execute_mission(db: Session, mission: Mission, plan: dict) -> dict:
+def execute_mission(db: Session, mission: Mission, plan: dict, user_id: str | None = None) -> dict:
     """Execute mission via Executor, then validate via Critic."""
     result = executor.execute_plan(db, mission, plan)
     step_outputs = result["step_outputs"]
@@ -142,7 +142,7 @@ def execute_mission(db: Session, mission: Mission, plan: dict) -> dict:
     ))
     db.commit()
 
-    final_text = synthesize_final_answer(mission.goal, step_outputs)
+    final_text = synthesize_final_answer(mission.goal, step_outputs, db=db, user_id=user_id)
     mission.result = final_text
     if verdict.verdict == "escalate":
         mission.status = "escalated"
@@ -179,7 +179,7 @@ def run_closed_loop(db: Session, request: AgentRunRequest) -> dict:
         }
 
     mission, plan = create_mission_from_proposal(db, proposal)
-    result = execute_mission(db, mission, plan)
+    result = execute_mission(db, mission, plan, user_id=request.user_id)
 
     return {
         "proposal_id": proposal.id,
@@ -246,7 +246,7 @@ def run_closed_loop_stream(db: Session, request: AgentRunRequest) -> Generator[s
     yield _sse("critic_verdict", verdict.to_dict())
 
     # 6. Final synthesis
-    final_text = synthesize_final_answer(mission.goal, step_outputs)
+    final_text = synthesize_final_answer(mission.goal, step_outputs, db=db, user_id=request.user_id)
     mission.result = final_text
     if verdict.verdict == "escalate":
         mission.status = "escalated"

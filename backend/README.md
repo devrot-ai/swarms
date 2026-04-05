@@ -4,6 +4,10 @@ An enterprise-grade FastAPI backend for an autonomous workflow system with Plann
 
 ## Features
 - **Agent loop**: Proposal → auto-approve → mission → plan → execute → validate → finalize
+- **Agent manager**: Dynamic agent profiles with role/skills/model preferences
+- **Task queue**: Redis-backed task queue with in-memory fallback for local/tests
+- **Provider-agnostic LLM layer**: OpenAI, Anthropic, and Ollama routing
+- **User API keys**: Encrypted at-rest per-user provider key storage
 - **Real-time streaming**: SSE endpoint emits per-step progress events
 - **Tool schema validation**: Pydantic input models + JSON-Schema manifest endpoint
 - **JWT authentication**: Bearer-token auth on all protected routes
@@ -62,6 +66,11 @@ curl -X POST http://localhost:8000/api/agent/run \
 | PATCH | `/api/policies/{key}` | Update a policy |
 | GET | `/api/state` | Get state snapshot |
 | POST | `/api/workers/recover-stale` | Recover stale missions |
+| GET | `/api/agents` | List active agent profiles |
+| POST | `/api/agents` | Create an agent profile |
+| GET | `/api/users/me/keys` | List providers with saved API keys |
+| POST | `/api/users/me/keys` | Save/update provider API key |
+| DELETE | `/api/users/me/keys` | Delete provider API key |
 | GET | `/api/auth/me` | Current user info |
 
 ## SSE Stream Events
@@ -92,8 +101,16 @@ The `/api/agent/stream` endpoint emits these SSE events in order:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DATABASE_URL` | `sqlite:///./swarms.db` | Database connection URL |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL |
+| `ENABLE_REDIS` | `false` | Enable Redis queue/pubsub backend |
+| `QUEUE_NAME` | `mission_tasks` | Queue key used for task dispatch |
 | `OPENAI_API_KEY` | — | OpenAI API key (optional) |
 | `OPENAI_MODEL` | `gpt-5.4` | OpenAI model to use |
+| `ANTHROPIC_API_KEY` | — | Anthropic API key (optional) |
+| `ANTHROPIC_MODEL` | `claude-3-7-sonnet-latest` | Anthropic model to use |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Local Ollama endpoint |
+| `OLLAMA_MODEL` | `llama3.1` | Local model name |
+| `API_KEY_ENCRYPTION_SECRET` | `dev-only-change-me-32bytes-minimum` | Secret used for API key encryption |
 | `ENABLE_LLM` | `false` | Enable LLM planner/critic |
 | `AUTO_APPROVE` | `true` | Auto-approve proposals |
 | `WORKER_POLICY` | `allow_all` | Worker policy |
@@ -105,9 +122,13 @@ The `/api/agent/stream` endpoint emits these SSE events in order:
 
 ```
 Request → Auth (JWT) → Routes → Orchestrator
-                                    ├── Planner (LLM or keyword)
-                                    ├── Executor (tools + retry)
+           ├── Planner (provider-routed LLM or keyword)
+           ├── Agent Manager (role/skills routing)
+           ├── Executor (tools + retry + task queue)
                                     └── Critic (validation)
+
+         ↘ Memory Layer (Postgres/SQLite)
+         ↘ Queue + Event Bus (Redis fallback in-memory)
 ```
 
 ## Running Tests

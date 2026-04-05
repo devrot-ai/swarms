@@ -5,6 +5,8 @@ import logging
 from datetime import datetime
 from sqlalchemy.orm import Session
 from app.models.entities import Mission, Step, Event
+from app.services.agent_manager import choose_agent_for_tool
+from app.services.queue import enqueue_task, mark_task_running, mark_task_done, mark_task_failed, publish_event
 from app.tools.registry import run_tool
 
 logger = logging.getLogger("swarms.executor")
@@ -26,6 +28,7 @@ class Executor:
         """Run each step, emitting events. Returns step_outputs and events."""
         mission.status = "running"
         db.commit()
+        publish_event("mission_started", {"mission_id": mission.id, "title": mission.title})
 
         step_outputs: list[dict] = []
         events: list[dict] = []
@@ -42,6 +45,29 @@ class Executor:
         for idx, step_def in enumerate(steps, start=1):
             tool_name = step_def.get("tool", "unknown")
             input_payload = step_def.get("input", {})
+            assigned_agent = choose_agent_for_tool(db, tool_name)
+            queued_task = enqueue_task(
+                db=db,
+                mission_id=mission.id,
+                agent_id=assigned_agent.id if assigned_agent else None,
+                payload={
+                    "step": idx,
+                    "tool": tool_name,
+                    "input": input_payload,
+                    "reason": step_def.get("reason", ""),
+                },
+            )
+            mark_task_running(db, queued_task.id)
+            publish_event(
+                "step_assigned",
+                {
+                    "mission_id": mission.id,
+                    "step": idx,
+                    "tool": tool_name,
+                    "task_id": queued_task.id,
+                    "agent_id": assigned_agent.id if assigned_agent else None,
+                },
+            )
 
             step_row = Step(
                 id=_uid("step"),
@@ -70,6 +96,11 @@ class Executor:
             step_row.output_json = json.dumps(result)
             step_row.status = "success" if "error" not in result else "failed"
             db.commit()
+
+            if "error" in result:
+                mark_task_failed(db, queued_task.id, str(result.get("error")))
+            else:
+                mark_task_done(db, queued_task.id, result)
 
             step_outputs.append({
                 "step_number": idx,

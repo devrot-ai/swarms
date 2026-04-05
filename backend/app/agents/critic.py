@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Literal
 from app.core.config import settings
+from app.services.llm import generate, GenerateRequest
 
 logger = logging.getLogger("swarms.critic")
 
@@ -36,34 +37,25 @@ class Critic:
             return CriticResult("retry", f"{len(failed_steps)} step(s) failed. Retry recommended.")
 
         # LLM-based validation when enabled
-        if settings.enable_llm and settings.openai_api_key:
+        if settings.enable_llm:
             return self._llm_validate(goal, step_outputs)
 
         return CriticResult("pass", "All steps completed successfully.")
 
     def _llm_validate(self, goal: str, step_outputs: list[dict]) -> CriticResult:
         try:
-            from openai import OpenAI
-            client = OpenAI(api_key=settings.openai_api_key)
-
-            response = client.responses.create(
-                model=settings.openai_model,
-                input=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a quality critic for an enterprise workflow system. "
-                            "Given a goal and step outputs, respond with ONLY valid JSON: "
-                            '{"verdict": "pass"|"retry"|"escalate", "reason": "..."}'
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": json.dumps({"goal": goal, "step_outputs": step_outputs}),
-                    },
-                ],
+            text = generate(
+                GenerateRequest(
+                    model=settings.openai_model,
+                    prompt=json.dumps({"goal": goal, "step_outputs": step_outputs}),
+                    temperature=0.1,
+                    system_prompt=(
+                        "You are a quality critic for an enterprise workflow system. "
+                        "Given a goal and step outputs, respond with ONLY valid JSON: "
+                        '{"verdict": "pass"|"retry"|"escalate", "reason": "..."}'
+                    ),
+                )
             )
-            text = getattr(response, "output_text", None)
             if text:
                 data = json.loads(text)
                 verdict = data.get("verdict", "pass")

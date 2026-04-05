@@ -6,6 +6,33 @@ from sqlalchemy.sql import func
 from app.core.database import Base
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    email: Mapped[Optional[str]] = mapped_column(String, nullable=True, unique=True)
+    encrypted_api_keys: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Optional[dt]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[Optional[dt]] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AgentProfile(Base):
+    __tablename__ = "agents"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    role: Mapped[str] = mapped_column(String)
+    skills_json: Mapped[str] = mapped_column(Text, default="[]")
+    model_preference: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    memory_scope: Mapped[str] = mapped_column(String, default="project")
+    prompt_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[Optional[dt]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[Optional[dt]] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    tasks: Mapped[list["Task"]] = relationship("Task", back_populates="agent")
+
+
 class Proposal(Base):
     __tablename__ = "proposals"
 
@@ -44,6 +71,28 @@ class Mission(Base):
     proposal: Mapped[Optional["Proposal"]] = relationship("Proposal", back_populates="mission", foreign_keys=[proposal_id])
     steps: Mapped[list["Step"]] = relationship("Step", back_populates="mission", cascade="all, delete-orphan")
     events: Mapped[list["Event"]] = relationship("Event", back_populates="mission", cascade="all, delete-orphan")
+    tasks: Mapped[list["Task"]] = relationship("Task", back_populates="mission", cascade="all, delete-orphan")
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    mission_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("missions.id"), nullable=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("agents.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String, default="pending")
+    task_type: Mapped[str] = mapped_column(String, default="tool_step")
+    input_json: Mapped[str] = mapped_column(Text)
+    result_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    retries: Mapped[int] = mapped_column(Integer, default=0)
+    max_retries: Mapped[int] = mapped_column(Integer, default=2)
+    queue_name: Mapped[str] = mapped_column(String, default="default")
+    created_at: Mapped[Optional[dt]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[Optional[dt]] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    mission: Mapped[Optional["Mission"]] = relationship("Mission", back_populates="tasks")
+    agent: Mapped[Optional["AgentProfile"]] = relationship("AgentProfile", back_populates="tasks")
 
 
 class Step(Base):

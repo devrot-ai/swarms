@@ -6,7 +6,15 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.exceptions import NotFoundError
-from app.schemas.contracts import AgentRunRequest, ProposalCreateRequest, PolicyUpdateRequest, EventIngestRequest
+from app.schemas.contracts import (
+    AgentRunRequest,
+    ProposalCreateRequest,
+    PolicyUpdateRequest,
+    EventIngestRequest,
+    ApiKeyUpsertRequest,
+    ApiKeyDeleteRequest,
+    AgentProfileCreateRequest,
+)
 from app.services.orchestrator import (
     run_closed_loop,
     run_closed_loop_stream,
@@ -20,6 +28,8 @@ from app.services.policy import set_policy
 from app.services.auth import get_current_user, CurrentUser
 from app.models.entities import Proposal, Mission, Event
 from app.tools.schemas import get_tool_definitions
+from app.services.user_keys import upsert_user_api_key, delete_user_api_key, list_user_key_providers
+from app.services.agent_manager import create_agent, list_agents, serialize_agent
 
 router = APIRouter()
 
@@ -169,3 +179,56 @@ def recover_stale(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     return {"recovered": recover_stale_missions(db, minutes=minutes)}
+
+
+@router.post("/users/me/keys")
+def upsert_key(
+    payload: ApiKeyUpsertRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    upsert_user_api_key(db, current_user.user_id, payload.provider, payload.api_key)
+    return {"ok": True, "provider": payload.provider}
+
+
+@router.delete("/users/me/keys")
+def delete_key(
+    payload: ApiKeyDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    deleted = delete_user_api_key(db, current_user.user_id, payload.provider)
+    return {"ok": deleted, "provider": payload.provider}
+
+
+@router.get("/users/me/keys")
+def list_keys(
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    return {"providers": list_user_key_providers(db, current_user.user_id)}
+
+
+@router.post("/agents")
+def create_agent_route(
+    payload: AgentProfileCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    row = create_agent(
+        db=db,
+        name=payload.name,
+        role=payload.role,
+        skills=payload.skills,
+        model=payload.model,
+        memory_scope=payload.memory_scope,
+    )
+    return serialize_agent(row)
+
+
+@router.get("/agents")
+def list_agents_route(
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    return [serialize_agent(a) for a in list_agents(db)]

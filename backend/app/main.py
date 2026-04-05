@@ -8,6 +8,7 @@ from app.core.database import Base, engine, SessionLocal
 from app.core.middleware import register_middleware
 from app.models import entities  # noqa: F401
 from app.services.policy import bootstrap_policies
+from app.services.agent_manager import ensure_default_agents
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 
@@ -19,6 +20,7 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         bootstrap_policies(db)
+        ensure_default_agents(db)
     finally:
         db.close()
     yield

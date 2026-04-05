@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from app.core.config import settings
+from app.services.llm import generate, GenerateRequest
 from app.tools.schemas import get_tool_definitions
 
 logger = logging.getLogger("swarms.planner")
@@ -52,14 +53,11 @@ class Planner:
     """Generates a structured mission plan from a user prompt."""
 
     def generate_plan(self, prompt: str, context: list[str] | None = None) -> dict:
-        """Return a mission plan. Uses OpenAI when enabled, otherwise keyword fallback."""
-        if not settings.enable_llm or not settings.openai_api_key:
+        """Return a mission plan. Uses routed LLM providers when enabled."""
+        if not settings.enable_llm:
             return _keyword_plan(prompt)
 
         try:
-            from openai import OpenAI
-            client = OpenAI(api_key=settings.openai_api_key)
-
             tool_manifest = _build_tool_manifest_text()
             context_block = ""
             if context:
@@ -74,14 +72,14 @@ class Planner:
             )
             user_content = prompt + context_block
 
-            response = client.responses.create(
-                model=settings.openai_model,
-                input=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_content},
-                ],
+            text = generate(
+                GenerateRequest(
+                    model=settings.openai_model,
+                    prompt=user_content,
+                    temperature=0.1,
+                    system_prompt=system,
+                )
             )
-            text = getattr(response, "output_text", None)
             if not text:
                 return _keyword_plan(prompt)
             data = json.loads(text)

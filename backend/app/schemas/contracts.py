@@ -44,3 +44,29 @@ class StateResponse(BaseModel):
     steps: list[dict]
     events: list[dict]
     policies: dict[str, str]
+
+
+class ApiKeyUpsertRequest(BaseModel):
+    provider: Literal["openai", "anthropic", "ollama", "custom"]
+    api_key: str = Field(min_length=1)
+
+
+class ApiKeyDeleteRequest(BaseModel):
+    provider: Literal["openai", "anthropic", "ollama", "custom"]
+
+
+class AgentProfileCreateRequest(BaseModel):
+    name: str = Field(min_length=1)
+    role: str = Field(min_length=1)
+    skills: list[str] = Field(default_factory=list)
+    model: str | None = None
+    memory_scope: str = "project"
+
+
+class AgentProfileResponse(BaseModel):
+    id: str
+    name: str
+    role: str
+    skills: list[str]
+    model: str | None
+    memory_scope: str
