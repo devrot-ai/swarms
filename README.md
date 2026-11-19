@@ -1,4 +1,5 @@
-https://swarms-five.vercel.app/
-changes re being made to the project 
-the swarms are going to be completely revapmed 
-the changes will be the bakend part not the frontend one 
+﻿# Swarms
+
+A project that is being reworked. The backend is being completely revamped while the frontend stays the same.
+
+Live version: https://swarms-five.vercel.app/
